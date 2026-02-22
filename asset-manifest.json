@@ -1,17 +1,17 @@
 {
   "files": {
-    "main.css": "/my-app/static/css/main.c1d4f32b.css",
-    "main.js": "/my-app/static/js/main.924c86b8.js",
+    "main.css": "/my-app/static/css/main.c9f20eb0.css",
+    "main.js": "/my-app/static/js/main.1a81225b.js",
     "static/js/453.fd2f0c4a.chunk.js": "/my-app/static/js/453.fd2f0c4a.chunk.js",
     "static/media/bootstrap-icons.woff?": "/my-app/static/media/bootstrap-icons.1295669cd4e305c97f2c.woff",
     "static/media/bootstrap-icons.woff2?": "/my-app/static/media/bootstrap-icons.92ea18a81d737146ff04.woff2",
     "index.html": "/my-app/index.html",
-    "main.c1d4f32b.css.map": "/my-app/static/css/main.c1d4f32b.css.map",
-    "main.924c86b8.js.map": "/my-app/static/js/main.924c86b8.js.map",
+    "main.c9f20eb0.css.map": "/my-app/static/css/main.c9f20eb0.css.map",
+    "main.1a81225b.js.map": "/my-app/static/js/main.1a81225b.js.map",
     "453.fd2f0c4a.chunk.js.map": "/my-app/static/js/453.fd2f0c4a.chunk.js.map"
   },
   "entrypoints": [
-    "static/css/main.c1d4f32b.css",
-    "static/js/main.924c86b8.js"
+    "static/css/main.c9f20eb0.css",
+    "static/js/main.1a81225b.js"
   ]
 }
