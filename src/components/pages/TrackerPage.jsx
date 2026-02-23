@@ -248,6 +248,22 @@ export default function TrackerPage({
     setDragOverStatus(null);
   };
 
+  const boardModal = isBoardModalOpen && (
+    <div className="modal-overlay" onClick={closeBoardModal}>
+      <div className="task-modal card shadow-lg" onClick={(event) => event.stopPropagation()}>
+        <div className="card-body">
+          <h5 className="mb-3">{boardModalMode === 'edit' ? 'Редагувати дошку' : 'Нова дошка'}</h5>
+          <form className="row g-3" onSubmit={submitBoard}>
+            <div className="col-12"><label className="form-label">Назва</label><input className="form-control" value={boardDraft.name} onChange={(event) => setBoardDraft((prev) => ({ ...prev, name: event.target.value }))} /></div>
+            <div className="col-12"><label className="form-label">Іконка</label><div className="tracker-icon-grid">{BOARD_ICON_OPTIONS.map((icon) => <button key={icon} type="button" className={`tracker-icon-option ${boardDraft.icon === icon ? 'active' : ''}`} onClick={() => setBoardDraft((prev) => ({ ...prev, icon }))}><i className={`bi ${icon}`} /></button>)}</div></div>
+            <div className="col-12"><label className="form-label">Колір</label><div className="tracker-color-grid">{BOARD_COLOR_OPTIONS.map((color) => <button key={color.id} type="button" className={`tracker-color-option ${boardDraft.colorId === color.id ? 'active' : ''}`} style={{ background: color.soft, borderColor: color.accent }} onClick={() => setBoardDraft((prev) => ({ ...prev, colorId: color.id }))}><span style={{ background: color.accent }} /></button>)}</div></div>
+            <div className="col-12 d-flex justify-content-end gap-2"><button type="button" className="btn btn-outline-secondary" onClick={closeBoardModal}>Скасувати</button><button type="submit" className="btn btn-primary">Зберегти</button></div>
+          </form>
+        </div>
+      </div>
+    </div>
+  );
+
   if (viewMode === 'archive') {
     return (
       <div className="d-flex flex-column gap-3">
@@ -394,6 +410,7 @@ export default function TrackerPage({
             </div>
           )}
         </div>
+        {boardModal}
       </>
     );
   }
@@ -469,13 +486,12 @@ export default function TrackerPage({
                           <div className="d-flex gap-2 flex-wrap mb-2">
                             <span className={`badge ${priorityMeta[task.priority].className}`}>{priorityMeta[task.priority].label}</span>
                             <span className="badge text-bg-light">до {task.dueDate}</span>
+                            <span className="badge text-bg-warning">
+                              <i className="bi bi-coin me-1" />
+                              {task.points}
+                            </span>
                           </div>
 
-                          <select className="form-select form-select-sm" value={task.status} onChange={(event) => onTaskStatusChange(task.id, event.target.value)}>
-                            <option value="todo">До виконання</option>
-                            <option value="progress">У процесі</option>
-                            <option value="done">Виконано</option>
-                          </select>
                         </article>
                       ))
                     )}
@@ -487,21 +503,7 @@ export default function TrackerPage({
         </div>
       )}
 
-      {isBoardModalOpen && (
-        <div className="modal-overlay" onClick={closeBoardModal}>
-          <div className="task-modal card shadow-lg" onClick={(event) => event.stopPropagation()}>
-            <div className="card-body">
-              <h5 className="mb-3">{boardModalMode === 'edit' ? 'Редагувати дошку' : 'Нова дошка'}</h5>
-              <form className="row g-3" onSubmit={submitBoard}>
-                <div className="col-12"><label className="form-label">Назва</label><input className="form-control" value={boardDraft.name} onChange={(event) => setBoardDraft((prev) => ({ ...prev, name: event.target.value }))} /></div>
-                <div className="col-12"><label className="form-label">Іконка</label><div className="tracker-icon-grid">{BOARD_ICON_OPTIONS.map((icon) => <button key={icon} type="button" className={`tracker-icon-option ${boardDraft.icon === icon ? 'active' : ''}`} onClick={() => setBoardDraft((prev) => ({ ...prev, icon }))}><i className={`bi ${icon}`} /></button>)}</div></div>
-                <div className="col-12"><label className="form-label">Колір</label><div className="tracker-color-grid">{BOARD_COLOR_OPTIONS.map((color) => <button key={color.id} type="button" className={`tracker-color-option ${boardDraft.colorId === color.id ? 'active' : ''}`} style={{ background: color.soft, borderColor: color.accent }} onClick={() => setBoardDraft((prev) => ({ ...prev, colorId: color.id }))}><span style={{ background: color.accent }} /></button>)}</div></div>
-                <div className="col-12 d-flex justify-content-end gap-2"><button type="button" className="btn btn-outline-secondary" onClick={closeBoardModal}>Скасувати</button><button type="submit" className="btn btn-primary">Зберегти</button></div>
-              </form>
-            </div>
-          </div>
-        </div>
-      )}
+      {boardModal}
 
       {isCreateTaskModalOpen && (
         <div className="modal-overlay" onClick={() => setCreateTaskModalOpen(false)}>
@@ -515,7 +517,30 @@ export default function TrackerPage({
                 <div className="col-12"><label className="form-label">Опис</label><textarea className="form-control" rows={3} value={taskForm.description} onChange={(event) => onTaskFormChange('description', event.target.value)} /></div>
                 <div className="col-12">
                   <label className="form-label">Теги</label>
-                  <div className="d-flex gap-2 mb-2"><input className="form-control" value={newTagLabel} onChange={(event) => setNewTagLabel(event.target.value)} placeholder="Назва" /><select className="form-select" value={newTagColor} onChange={(event) => setNewTagColor(event.target.value)}>{TASK_TAG_COLOR_OPTIONS.map((color) => <option key={color} value={color}>{color}</option>)}</select><button type="button" className="btn btn-outline-primary" onClick={() => addTaskTag(false)}>Додати</button></div>
+                  <div className="d-flex gap-2 mb-2">
+                    <input
+                      className="form-control"
+                      value={newTagLabel}
+                      onChange={(event) => setNewTagLabel(event.target.value)}
+                      placeholder="Назва"
+                    />
+                    <button type="button" className="btn btn-outline-primary" onClick={() => addTaskTag(false)}>
+                      Додати
+                    </button>
+                  </div>
+                  <div className="task-tag-color-picker mb-2">
+                    {TASK_TAG_COLOR_OPTIONS.map((color) => (
+                      <button
+                        key={color}
+                        type="button"
+                        className={`task-tag-color-swatch ${newTagColor === color ? 'active' : ''}`}
+                        style={{ background: color }}
+                        title={color}
+                        aria-label={`Колір ${color}`}
+                        onClick={() => setNewTagColor(color)}
+                      />
+                    ))}
+                  </div>
                   <div className="d-flex gap-2 flex-wrap">{(taskForm.tags || []).map((tag) => <span key={tag.id} className="badge" style={tagStyle(tag.color)}>{tag.label}<button type="button" className="btn btn-sm p-0 ms-2" style={{ color: 'inherit' }} onClick={() => removeTaskTag(tag.id, false)}><i className="bi bi-x" /></button></span>)}</div>
                 </div>
                 <div className="col-12 d-flex justify-content-end gap-2"><button type="button" className="btn btn-outline-secondary" onClick={() => setCreateTaskModalOpen(false)}>Скасувати</button><button type="submit" className="btn btn-primary">Зберегти</button></div>
@@ -537,7 +562,30 @@ export default function TrackerPage({
                 <div className="col-12"><label className="form-label">Опис</label><textarea className="form-control" rows={3} value={editTaskDraft.description} onChange={(event) => setEditTaskDraft((prev) => ({ ...prev, description: event.target.value }))} /></div>
                 <div className="col-12">
                   <label className="form-label">Теги</label>
-                  <div className="d-flex gap-2 mb-2"><input className="form-control" value={editTagLabel} onChange={(event) => setEditTagLabel(event.target.value)} placeholder="Назва" /><select className="form-select" value={editTagColor} onChange={(event) => setEditTagColor(event.target.value)}>{TASK_TAG_COLOR_OPTIONS.map((color) => <option key={color} value={color}>{color}</option>)}</select><button type="button" className="btn btn-outline-primary" onClick={() => addTaskTag(true)}>Додати</button></div>
+                  <div className="d-flex gap-2 mb-2">
+                    <input
+                      className="form-control"
+                      value={editTagLabel}
+                      onChange={(event) => setEditTagLabel(event.target.value)}
+                      placeholder="Назва"
+                    />
+                    <button type="button" className="btn btn-outline-primary" onClick={() => addTaskTag(true)}>
+                      Додати
+                    </button>
+                  </div>
+                  <div className="task-tag-color-picker mb-2">
+                    {TASK_TAG_COLOR_OPTIONS.map((color) => (
+                      <button
+                        key={color}
+                        type="button"
+                        className={`task-tag-color-swatch ${editTagColor === color ? 'active' : ''}`}
+                        style={{ background: color }}
+                        title={color}
+                        aria-label={`Колір ${color}`}
+                        onClick={() => setEditTagColor(color)}
+                      />
+                    ))}
+                  </div>
                   <div className="d-flex gap-2 flex-wrap">{(editTaskDraft.tags || []).map((tag) => <span key={tag.id} className="badge" style={tagStyle(tag.color)}>{tag.label}<button type="button" className="btn btn-sm p-0 ms-2" style={{ color: 'inherit' }} onClick={() => removeTaskTag(tag.id, true)}><i className="bi bi-x" /></button></span>)}</div>
                 </div>
                 <div className="col-12 d-flex justify-content-end gap-2"><button type="button" className="btn btn-outline-secondary" onClick={() => setEditTaskModalOpen(false)}>Скасувати</button><button type="submit" className="btn btn-primary">Зберегти</button></div>

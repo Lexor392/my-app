@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   createUserWithEmailAndPassword,
   deleteUser,
@@ -9,12 +9,80 @@ import {
   signOut,
   updateProfile
 } from 'firebase/auth';
-import { collection, deleteDoc, doc, getDoc, onSnapshot, setDoc } from 'firebase/firestore';
+import {
+  addDoc,
+  collection,
+  deleteDoc,
+  doc,
+  getDoc,
+  limit,
+  onSnapshot,
+  orderBy,
+  query,
+  setDoc
+} from 'firebase/firestore';
 import { ADMIN_ACCOUNT, OWNER_EMAIL, createUserProfile, sanitizeUser } from '../data/constants';
 import { auth, db, googleProvider, hasFirebaseConfig } from '../lib/firebase';
 
 const USERS_COLLECTION = 'users';
 const PRESENCE_COLLECTION = 'presence';
+const USER_ACTIVITY_COLLECTION = 'userActivity';
+
+const PRESENCE_HEARTBEAT_MS = 12000;
+const PRESENCE_TTL_MS = 45000;
+
+const EVENT_LOGIN = 'login';
+const EVENT_LOGOUT = 'logout';
+
+const toIsoNow = () => new Date().toISOString();
+const toIsoFuture = (ms) => new Date(Date.now() + ms).toISOString();
+
+const parseEventTimestamp = (value) => {
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+    return null;
+  }
+
+  if (value && typeof value.toDate === 'function') {
+    return value.toDate().getTime();
+  }
+
+  return null;
+};
+
+const isPresenceOnline = (entry, now = Date.now()) => {
+  if (!entry?.isOnline) {
+    return false;
+  }
+
+  const expiresAt = Date.parse(entry.expiresAt || '');
+  if (Number.isFinite(expiresAt)) {
+    return expiresAt > now;
+  }
+
+  const lastSeenAt = Date.parse(entry.lastSeenAt || '');
+  return Number.isFinite(lastSeenAt) && now - lastSeenAt <= PRESENCE_TTL_MS;
+};
+
+const enrichUserWithPresence = (user, presenceEntry, now = Date.now()) => {
+  if (!presenceEntry) {
+    return {
+      ...user,
+      isOnline: false
+    };
+  }
+
+  return {
+    ...user,
+    isOnline: isPresenceOnline(presenceEntry, now),
+    lastSeenAt: presenceEntry.lastSeenAt || user.lastSeenAt || null,
+    lastLoginAt: presenceEntry.lastLoginAt || user.lastLoginAt || null,
+    lastLogoutAt: presenceEntry.lastLogoutAt || user.lastLogoutAt || null
+  };
+};
 
 const createDefaultAuthForm = () => ({
   identifier: '',
@@ -120,6 +188,19 @@ export default function useAuthStore(showAlert) {
   const [currentUser, setCurrentUser] = useState(null);
   const [allUsers, setAllUsers] = useState([]);
   const [liveUsersCount, setLiveUsersCount] = useState(0);
+  const [authEvents, setAuthEvents] = useState([]);
+  const [authEventsStats, setAuthEventsStats] = useState({
+    logins24h: 0,
+    logouts24h: 0,
+    totalEvents: 0
+  });
+
+  const presenceMapRef = useRef(new Map());
+  const presenceIdentityRef = useRef({
+    name: '',
+    avatar: '',
+    email: ''
+  });
 
   const canAccessUsersDirectory = Boolean(
     currentUser?.isAdmin
@@ -140,6 +221,21 @@ export default function useAuthStore(showAlert) {
   }, []);
 
   useEffect(() => {
+    presenceIdentityRef.current = {
+      name: currentUser?.name || sessionUser?.displayName || 'Користувач',
+      avatar: currentUser?.avatar || sessionUser?.photoURL || '',
+      email: (currentUser?.email || sessionUser?.email || '').trim().toLowerCase()
+    };
+  }, [
+    currentUser?.avatar,
+    currentUser?.email,
+    currentUser?.name,
+    sessionUser?.displayName,
+    sessionUser?.email,
+    sessionUser?.photoURL
+  ]);
+
+  useEffect(() => {
     if (!hasFirebaseConfig || !auth) {
       return;
     }
@@ -156,6 +252,13 @@ export default function useAuthStore(showAlert) {
         setCurrentUser(null);
         setAllUsers([]);
         setLiveUsersCount(0);
+        setAuthEvents([]);
+        setAuthEventsStats({
+          logins24h: 0,
+          logouts24h: 0,
+          totalEvents: 0
+        });
+        presenceMapRef.current = new Map();
       }
     });
 
@@ -316,6 +419,7 @@ export default function useAuthStore(showAlert) {
     const unsubscribe = onSnapshot(
       usersRef,
       (snapshot) => {
+        const now = Date.now();
         const users = snapshot.docs
           .map((snapshotDoc) =>
             sanitizeUser({
@@ -328,7 +432,8 @@ export default function useAuthStore(showAlert) {
               return Number(right.isAdmin) - Number(left.isAdmin);
             }
             return new Date(right.joinedAt).getTime() - new Date(left.joinedAt).getTime();
-          });
+          })
+          .map((user) => enrichUserWithPresence(user, presenceMapRef.current.get(user.id), now));
 
         setAllUsers(users);
       },
@@ -342,72 +447,217 @@ export default function useAuthStore(showAlert) {
   }, [sessionUser, canAccessUsersDirectory, showAlert]);
 
   useEffect(() => {
-    if (!sessionUser || !db) {
+    if (!sessionUser?.uid || !db) {
       setLiveUsersCount(0);
+      presenceMapRef.current = new Map();
       return;
     }
 
-    const presenceRef = collection(db, PRESENCE_COLLECTION);
-    let rawPresence = [];
-
-    const calcLiveCount = () => {
+    const calculateFromMap = (sourceMap = presenceMapRef.current) => {
       const now = Date.now();
-      const online = rawPresence.filter((entry) => {
-        const ts = new Date(entry.lastSeenAt || 0).getTime();
-        return Number.isFinite(ts) && now - ts <= 15000;
+      let onlineCount = 0;
+      sourceMap.forEach((entry) => {
+        if (isPresenceOnline(entry, now)) {
+          onlineCount += 1;
+        }
       });
-      setLiveUsersCount(online.length);
-    };
+      setLiveUsersCount(onlineCount);
 
-    const heartbeat = async (isOnline = true) => {
-      try {
-        await setDoc(
-          doc(db, PRESENCE_COLLECTION, sessionUser.uid),
-          {
-            uid: sessionUser.uid,
-            name: currentUser?.name || sessionUser.displayName || 'Користувач',
-            avatar: currentUser?.avatar || sessionUser.photoURL || '',
-            lastSeenAt: new Date().toISOString(),
-            isOnline
-          },
-          { merge: true }
+      if (canAccessUsersDirectory) {
+        setAllUsers((previous) =>
+          previous.map((user) => enrichUserWithPresence(user, sourceMap.get(user.id), now))
         );
-      } catch {
-        // ignore heartbeat errors
       }
     };
 
+    const presenceRef = collection(db, PRESENCE_COLLECTION);
     const unsubscribe = onSnapshot(
       presenceRef,
       (snapshot) => {
-        rawPresence = snapshot.docs.map((item) => item.data());
-        calcLiveCount();
+        const nextMap = new Map();
+        snapshot.docs.forEach((snapshotDoc) => {
+          const payload = snapshotDoc.data() || {};
+          const uid = payload.uid || snapshotDoc.id;
+          nextMap.set(uid, { ...payload, uid });
+        });
+
+        presenceMapRef.current = nextMap;
+        calculateFromMap(nextMap);
       },
       () => {
         setLiveUsersCount(0);
       }
     );
 
-    const calcInterval = setInterval(calcLiveCount, 5000);
-    const pingInterval = setInterval(() => {
-      void heartbeat(true);
-    }, 5000);
-    void heartbeat(true);
-
-    const handleBeforeUnload = () => {
-      void heartbeat(false);
-    };
-    window.addEventListener('beforeunload', handleBeforeUnload);
+    const recalcInterval = setInterval(() => {
+      calculateFromMap();
+    }, 4000);
 
     return () => {
-      window.removeEventListener('beforeunload', handleBeforeUnload);
-      clearInterval(calcInterval);
-      clearInterval(pingInterval);
+      clearInterval(recalcInterval);
       unsubscribe();
-      void heartbeat(false);
     };
-  }, [sessionUser, currentUser?.avatar, currentUser?.name]);
+  }, [sessionUser?.uid, canAccessUsersDirectory]);
 
+  useEffect(() => {
+    if (!sessionUser?.uid || !db) {
+      return;
+    }
+
+    const uid = sessionUser.uid;
+    const sessionId = `${uid}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const presenceDocRef = doc(db, PRESENCE_COLLECTION, uid);
+    const activityRef = collection(db, USER_ACTIVITY_COLLECTION);
+    let stopped = false;
+    let offlineSent = false;
+
+    const writePresence = async ({ isOnline, eventType = '' } = {}) => {
+      if (stopped && isOnline) {
+        return;
+      }
+
+      const nowIso = toIsoNow();
+      const identity = presenceIdentityRef.current;
+      const payload = {
+        uid,
+        name: identity.name || 'Користувач',
+        avatar: identity.avatar || '',
+        email: identity.email || '',
+        isOnline: Boolean(isOnline),
+        lastSeenAt: nowIso,
+        expiresAt: isOnline ? toIsoFuture(PRESENCE_TTL_MS) : nowIso,
+        sessionId
+      };
+
+      if (eventType === EVENT_LOGIN) {
+        payload.lastLoginAt = nowIso;
+      }
+      if (eventType === EVENT_LOGOUT) {
+        payload.lastLogoutAt = nowIso;
+      }
+
+      try {
+        await setDoc(presenceDocRef, payload, { merge: true });
+      } catch {
+        // ignore presence write errors
+      }
+
+      if (!eventType) {
+        return;
+      }
+
+      try {
+        await addDoc(activityRef, {
+          uid,
+          type: eventType,
+          createdAt: nowIso,
+          sessionId,
+          name: payload.name,
+          email: payload.email
+        });
+      } catch {
+        // ignore activity write errors
+      }
+    };
+
+    const publishOffline = () => {
+      if (offlineSent) {
+        return;
+      }
+      offlineSent = true;
+      void writePresence({ isOnline: false, eventType: EVENT_LOGOUT });
+    };
+
+    const pingInterval = setInterval(() => {
+      void writePresence({ isOnline: true });
+    }, PRESENCE_HEARTBEAT_MS);
+
+    void writePresence({ isOnline: true, eventType: EVENT_LOGIN });
+
+    window.addEventListener('beforeunload', publishOffline);
+    window.addEventListener('pagehide', publishOffline);
+
+    return () => {
+      stopped = true;
+      clearInterval(pingInterval);
+      window.removeEventListener('beforeunload', publishOffline);
+      window.removeEventListener('pagehide', publishOffline);
+      publishOffline();
+    };
+  }, [sessionUser?.uid]);
+
+  useEffect(() => {
+    if (!sessionUser?.uid || !canAccessUsersDirectory || !db) {
+      setAuthEvents([]);
+      setAuthEventsStats({
+        logins24h: 0,
+        logouts24h: 0,
+        totalEvents: 0
+      });
+      return;
+    }
+
+    const feedQuery = query(
+      collection(db, USER_ACTIVITY_COLLECTION),
+      orderBy('createdAt', 'desc'),
+      limit(200)
+    );
+
+    const unsubscribe = onSnapshot(
+      feedQuery,
+      (snapshot) => {
+        const events = snapshot.docs.map((snapshotDoc) => {
+          const payload = snapshotDoc.data() || {};
+          const createdAt = typeof payload.createdAt === 'string'
+            ? payload.createdAt
+            : (payload.createdAt?.toDate?.().toISOString?.() || '');
+
+          return {
+            id: snapshotDoc.id,
+            uid: payload.uid || '',
+            type: payload.type || '',
+            createdAt,
+            name: payload.name || 'User',
+            email: payload.email || ''
+          };
+        });
+
+        const since = Date.now() - (24 * 60 * 60 * 1000);
+        let logins24h = 0;
+        let logouts24h = 0;
+
+        events.forEach((event) => {
+          const parsed = parseEventTimestamp(event.createdAt);
+          if (!Number.isFinite(parsed) || parsed < since) {
+            return;
+          }
+
+          if (event.type === EVENT_LOGIN) {
+            logins24h += 1;
+          } else if (event.type === EVENT_LOGOUT) {
+            logouts24h += 1;
+          }
+        });
+
+        setAuthEvents(events.slice(0, 30));
+        setAuthEventsStats({
+          logins24h,
+          logouts24h,
+          totalEvents: events.length
+        });
+      },
+      () => {
+        setAuthEvents([]);
+        setAuthEventsStats({
+          logins24h: 0,
+          logouts24h: 0,
+          totalEvents: 0
+        });
+      }
+    );
+
+    return unsubscribe;
+  }, [sessionUser?.uid, canAccessUsersDirectory]);
   const persistUser = useCallback(
     async (userId, candidate, options = {}) => {
       if (!db) {
@@ -599,18 +849,6 @@ export default function useAuthStore(showAlert) {
       return;
     }
 
-    if (db && auth.currentUser) {
-      try {
-        await setDoc(
-          doc(db, PRESENCE_COLLECTION, auth.currentUser.uid),
-          { isOnline: false, lastSeenAt: new Date().toISOString() },
-          { merge: true }
-        );
-      } catch {
-        // Не блокуємо logout, якщо presence не оновився.
-      }
-    }
-
     try {
       await signOut(auth);
       showAlert('success', 'Ви вийшли з акаунта.');
@@ -676,6 +914,8 @@ export default function useAuthStore(showAlert) {
     currentUser,
     allUsers,
     liveUsersCount,
+    authEvents,
+    authEventsStats,
     setAuthMode,
     onAuthFormChange,
     onLogin,

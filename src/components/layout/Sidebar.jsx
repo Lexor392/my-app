@@ -18,7 +18,7 @@ export default function Sidebar({
         type="button"
         className={`sidebar-backdrop ${isOpen ? 'show' : ''}`}
         onClick={onClose}
-        aria-label="Закрити меню"
+        aria-label="Close menu"
       />
 
       <aside className={`sidebar ${isOpen ? 'open' : ''}`}>
@@ -48,10 +48,10 @@ export default function Sidebar({
 
         <div className="sidebar-footer-meta">
           <div className="d-flex justify-content-between align-items-center mb-2">
-            <div className="small text-body-secondary">Онлайн</div>
+            <div className="small text-body-secondary">Online</div>
             <div className="fw-semibold">{liveUsersCount}</div>
           </div>
-          <div className="small text-body-secondary">Версія</div>
+          <div className="small text-body-secondary">Version</div>
           <div className="fw-semibold">{appVersion}</div>
         </div>
       </aside>

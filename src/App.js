@@ -66,6 +66,8 @@ function App() {
     currentUser,
     allUsers,
     liveUsersCount,
+    authEvents,
+    authEventsStats,
     setAuthMode,
     onAuthFormChange,
     onLogin,
@@ -77,7 +79,14 @@ function App() {
     persistCurrentUser
   } = useAuthStore(showAlert);
 
-  const { isShopReady, shopCategories, shopProducts, shopDraftProducts, persistShop } = useShopStore({
+  const {
+    isShopReady,
+    shopCategories,
+    shopProducts,
+    shopDraftProducts,
+    shopArchivedProducts,
+    persistShop
+  } = useShopStore({
     sessionUser,
     currentUser,
     showAlert
@@ -164,6 +173,7 @@ function App() {
     shopCategories,
     shopProducts,
     shopDraftProducts,
+    shopArchivedProducts,
     persistShop
   });
 
@@ -341,6 +351,7 @@ function App() {
             shopProducts={shopProducts}
             shopCategories={shopCategories}
             shopDraftProducts={shopDraftProducts}
+            shopArchivedProducts={shopArchivedProducts}
             onSaveUser={adminActions.onSaveUser}
             onToggleBan={adminActions.onToggleBan}
             onDeleteUser={adminActions.onDeleteUser}
@@ -356,8 +367,12 @@ function App() {
             onDeleteProduct={adminActions.onDeleteProduct}
             onSaveDraftProduct={adminActions.onSaveDraftProduct}
             onDeleteDraftProduct={adminActions.onDeleteDraftProduct}
+            onRestoreArchivedProduct={adminActions.onRestoreArchivedProduct}
+            onDeleteArchivedProduct={adminActions.onDeleteArchivedProduct}
             appVersion={APP_VERSION}
             releaseNotes={RELEASE_NOTES}
+            authEvents={authEvents}
+            authEventsStats={authEventsStats}
             formatDateTime={formatDateTime}
           />
         );

@@ -5,32 +5,68 @@ function histogramWidth(value, max) {
   return Math.max(4, Math.round((value / max) * 100));
 }
 
+function formatEventTime(value) {
+  const parsed = Date.parse(value || '');
+  if (!Number.isFinite(parsed)) {
+    return 'n/a';
+  }
+
+  return new Date(parsed).toLocaleString('uk-UA', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+}
+
 export default function AdminAnalyticsSection({ analytics }) {
   return (
     <div className="d-flex flex-column gap-4">
       <div className="row g-3">
         <div className="col-md-3 col-6">
           <div className="admin-stat-card">
-            <div className="small text-body-secondary">Користувачів</div>
+            <div className="small text-body-secondary">Users</div>
             <div className="admin-stat-value">{analytics.totalUsers}</div>
           </div>
         </div>
         <div className="col-md-3 col-6">
           <div className="admin-stat-card">
-            <div className="small text-body-secondary">Заблокованих</div>
+            <div className="small text-body-secondary">Banned</div>
             <div className="admin-stat-value">{analytics.bannedUsers}</div>
           </div>
         </div>
         <div className="col-md-3 col-6">
           <div className="admin-stat-card">
-            <div className="small text-body-secondary">З флажками</div>
+            <div className="small text-body-secondary">Flagged</div>
             <div className="admin-stat-value">{analytics.flaggedUsersCount}</div>
           </div>
         </div>
         <div className="col-md-3 col-6">
           <div className="admin-stat-card">
-            <div className="small text-body-secondary">Власників</div>
+            <div className="small text-body-secondary">Owners</div>
             <div className="admin-stat-value">{analytics.adminsCount}</div>
+          </div>
+        </div>
+      </div>
+
+      <div className="row g-3">
+        <div className="col-md-4 col-6">
+          <div className="admin-stat-card">
+            <div className="small text-body-secondary">Online now</div>
+            <div className="admin-stat-value">{analytics.onlineUsers}</div>
+          </div>
+        </div>
+        <div className="col-md-4 col-6">
+          <div className="admin-stat-card">
+            <div className="small text-body-secondary">Logins (24h)</div>
+            <div className="admin-stat-value">{analytics.logins24h}</div>
+          </div>
+        </div>
+        <div className="col-md-4 col-6">
+          <div className="admin-stat-card">
+            <div className="small text-body-secondary">Logouts (24h)</div>
+            <div className="admin-stat-value">{analytics.logouts24h}</div>
           </div>
         </div>
       </div>
@@ -39,7 +75,7 @@ export default function AdminAnalyticsSection({ analytics }) {
         <div className="col-lg-7">
           <div className="card shadow-sm h-100">
             <div className="card-body">
-              <h6 className="mb-3">Реєстрації за останні 7 днів</h6>
+              <h6 className="mb-3">Registrations for last 7 days</h6>
               <div className="admin-histogram">
                 {(() => {
                   const max = Math.max(1, ...analytics.registrationsHistogram.map((entry) => entry.value));
@@ -65,23 +101,23 @@ export default function AdminAnalyticsSection({ analytics }) {
           <div className="card shadow-sm h-100">
             <div className="card-body d-flex flex-column gap-3">
               <div className="admin-mini-card">
-                <div className="small text-body-secondary">Усього завдань</div>
+                <div className="small text-body-secondary">All tasks</div>
                 <div className="fw-semibold">{analytics.totalTasks}</div>
               </div>
               <div className="admin-mini-card">
-                <div className="small text-body-secondary">Виконано</div>
+                <div className="small text-body-secondary">Done</div>
                 <div className="fw-semibold">{analytics.doneTasks}</div>
               </div>
               <div className="admin-mini-card">
-                <div className="small text-body-secondary">У процесі</div>
+                <div className="small text-body-secondary">In progress</div>
                 <div className="fw-semibold">{analytics.progressTasks}</div>
               </div>
               <div className="admin-mini-card">
-                <div className="small text-body-secondary">До виконання</div>
+                <div className="small text-body-secondary">Todo</div>
                 <div className="fw-semibold">{analytics.todoTasks}</div>
               </div>
               <div className="admin-mini-card">
-                <div className="small text-body-secondary">Товарів / категорій</div>
+                <div className="small text-body-secondary">Products / categories</div>
                 <div className="fw-semibold">{analytics.productsCount} / {analytics.categoriesCount}</div>
               </div>
             </div>
@@ -93,7 +129,7 @@ export default function AdminAnalyticsSection({ analytics }) {
         <div className="col-lg-5">
           <div className="card shadow-sm h-100">
             <div className="card-body">
-              <h6 className="mb-3">Розподіл ролей</h6>
+              <h6 className="mb-3">Roles distribution</h6>
               <div className="d-flex flex-column gap-2">
                 {analytics.roleDistribution.map((role) => (
                   <div className="admin-role-row" key={role.id}>
@@ -109,9 +145,9 @@ export default function AdminAnalyticsSection({ analytics }) {
         <div className="col-lg-7">
           <div className="card shadow-sm h-100">
             <div className="card-body">
-              <h6 className="mb-3">Топ користувачів за балансом</h6>
+              <h6 className="mb-3">Top users by balance</h6>
               {analytics.topUsers.length === 0 ? (
-                <p className="text-body-secondary mb-0">Дані відсутні.</p>
+                <p className="text-body-secondary mb-0">No data.</p>
               ) : (
                 <div className="d-flex flex-column gap-2">
                   {analytics.topUsers.map((user, index) => (
@@ -120,13 +156,41 @@ export default function AdminAnalyticsSection({ analytics }) {
                         <span className="badge text-bg-primary">#{index + 1}</span>
                         <strong>{user.name}</strong>
                       </div>
-                      <div className="small text-body-secondary">{user.points} балів</div>
+                      <div className="small text-body-secondary">{user.points} points</div>
                     </div>
                   ))}
                 </div>
               )}
             </div>
           </div>
+        </div>
+      </div>
+
+      <div className="card shadow-sm">
+        <div className="card-body">
+          <div className="d-flex justify-content-between align-items-center mb-3">
+            <h6 className="mb-0">Auth activity (realtime)</h6>
+            <span className="badge text-bg-light">{analytics.authEventsTotal}</span>
+          </div>
+          {analytics.recentAuthEvents.length === 0 ? (
+            <p className="text-body-secondary mb-0">No events yet.</p>
+          ) : (
+            <div className="d-flex flex-column gap-2">
+              {analytics.recentAuthEvents.map((event) => (
+                <div key={event.id} className="admin-auth-event">
+                  <div className="d-flex align-items-center gap-2">
+                    <span className={`badge ${event.type === 'login' ? 'text-bg-success' : 'text-bg-secondary'}`}>
+                      {event.type === 'login' ? 'login' : 'logout'}
+                    </span>
+                    <strong>{event.name || 'User'}</strong>
+                  </div>
+                  <div className="small text-body-secondary">
+                    {event.email || event.uid} • {formatEventTime(event.createdAt)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>

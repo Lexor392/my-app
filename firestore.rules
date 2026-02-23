@@ -114,6 +114,34 @@ service cloud.firestore {
       allow write: if canManageShop();
     }
 
+    match /presence/{uid} {
+      allow read: if isAuthenticated();
+
+      allow create, update: if isAuthenticated()
+        && request.auth.uid == uid
+        && request.resource.data.uid == uid;
+
+      allow delete: if isOwner()
+        || (
+          isAuthenticated()
+          && request.auth.uid == uid
+        );
+    }
+
+    match /userActivity/{eventId} {
+      allow read: if canViewUsersDirectory();
+
+      allow create: if isAuthenticated()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.keys().hasAll(["uid", "type", "createdAt"])
+        && request.resource.data.type is string
+        && request.resource.data.createdAt is string
+        && ["login", "logout"].hasAny([request.resource.data.type]);
+
+      allow update: if false;
+      allow delete: if isOwner();
+    }
+
     match /mail/{mailId} {
       allow create: if isOwner() || isOperator();
       allow read, update, delete: if isOwner();

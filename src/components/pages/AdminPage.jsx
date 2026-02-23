@@ -39,6 +39,7 @@ export default function AdminPage({
   shopProducts,
   shopCategories,
   shopDraftProducts = [],
+  shopArchivedProducts = [],
   onSaveUser,
   onToggleBan,
   onDeleteUser,
@@ -54,6 +55,10 @@ export default function AdminPage({
   onDeleteProduct,
   onSaveDraftProduct,
   onDeleteDraftProduct,
+  onRestoreArchivedProduct,
+  onDeleteArchivedProduct,
+  authEvents = [],
+  authEventsStats = { logins24h: 0, logouts24h: 0, totalEvents: 0 },
   appVersion = 'v1.0.0',
   releaseNotes = [],
   formatDateTime
@@ -239,6 +244,11 @@ export default function AdminPage({
       todoTasks: users.flatMap((user) => user.tasks || []).filter((task) => task.status === 'todo').length,
       productsCount: shopProducts.length,
       categoriesCount: shopCategories.length,
+      onlineUsers: users.filter((user) => user.isOnline).length,
+      logins24h: Number(authEventsStats.logins24h || 0),
+      logouts24h: Number(authEventsStats.logouts24h || 0),
+      authEventsTotal: Number(authEventsStats.totalEvents || 0),
+      recentAuthEvents: authEvents.slice(0, 12),
       roleDistribution: [
         ...roleOptions.map((role) => ({
           id: role.id,
@@ -250,7 +260,7 @@ export default function AdminPage({
       registrationsHistogram: series.map((item) => ({ label: item.label, value: registrationsMap[item.key] })),
       topUsers: [...users].sort((a, b) => Number(b.points || 0) - Number(a.points || 0)).slice(0, 5)
     };
-  }, [roleOptions, shopCategories.length, shopProducts.length, users]);
+  }, [authEvents, authEventsStats.logins24h, authEventsStats.logouts24h, authEventsStats.totalEvents, roleOptions, shopCategories.length, shopProducts.length, users]);
 
   const handleSaveTask = async (taskId) => {
     if (!selectedUser) {
@@ -388,6 +398,7 @@ export default function AdminPage({
           shopCategories={shopCategories}
           shopProducts={shopProducts}
           shopDraftProducts={shopDraftProducts}
+          shopArchivedProducts={shopArchivedProducts}
           onAddCategory={onAddCategory}
           onRenameCategory={onRenameCategory}
           onDeleteCategory={onDeleteCategory}
@@ -395,6 +406,8 @@ export default function AdminPage({
           onDeleteProduct={onDeleteProduct}
           onSaveDraftProduct={onSaveDraftProduct}
           onDeleteDraftProduct={onDeleteDraftProduct}
+          onRestoreArchivedProduct={onRestoreArchivedProduct}
+          onDeleteArchivedProduct={onDeleteArchivedProduct}
         />
       )}
 

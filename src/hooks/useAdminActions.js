@@ -12,6 +12,7 @@ export default function useAdminActions({
   shopCategories,
   shopProducts,
   shopDraftProducts,
+  shopArchivedProducts,
   persistShop
 }) {
   const withTargetUser = useCallback(
@@ -340,14 +341,21 @@ export default function useAdminActions({
   );
 
   const persistShopState = useCallback(
-    async ({ categories = shopCategories, products = shopProducts, draftProducts = shopDraftProducts, successMessage }) =>
+    async ({
+      categories = shopCategories,
+      products = shopProducts,
+      draftProducts = shopDraftProducts,
+      archivedProducts = shopArchivedProducts,
+      successMessage
+    }) =>
       persistShop({
         categories,
         products,
         draftProducts,
+        archivedProducts,
         successMessage
       }),
-    [persistShop, shopCategories, shopDraftProducts, shopProducts]
+    [persistShop, shopArchivedProducts, shopCategories, shopDraftProducts, shopProducts]
   );
 
   const onAddCategory = useCallback(
@@ -404,15 +412,27 @@ export default function useAdminActions({
       const nextDraftProducts = shopDraftProducts.map((product) =>
         product.category === from ? { ...product, category: to } : product
       );
+      const nextArchivedProducts = shopArchivedProducts.map((product) =>
+        product.category === from ? { ...product, category: to } : product
+      );
 
       return persistShopState({
         categories: nextCategories,
         products: nextProducts,
         draftProducts: nextDraftProducts,
+        archivedProducts: nextArchivedProducts,
         successMessage: 'Категорію оновлено.'
       });
     },
-    [permissions.canManageShop, persistShopState, shopCategories, shopDraftProducts, shopProducts, showAlert]
+    [
+      permissions.canManageShop,
+      persistShopState,
+      shopArchivedProducts,
+      shopCategories,
+      shopDraftProducts,
+      shopProducts,
+      showAlert
+    ]
   );
 
   const onDeleteCategory = useCallback(
@@ -443,22 +463,37 @@ export default function useAdminActions({
           ? { ...product, category: fallbackCategory }
           : product
       );
+      const nextArchivedProducts = shopArchivedProducts.map((product) =>
+        product.category === category
+          ? { ...product, category: fallbackCategory }
+          : product
+      );
 
       return persistShopState({
         categories: nextCategories,
         products: nextProducts,
         draftProducts: nextDraftProducts,
+        archivedProducts: nextArchivedProducts,
         successMessage: 'Категорію видалено.'
       });
     },
-    [permissions.canManageShop, persistShopState, shopCategories, shopDraftProducts, shopProducts, showAlert]
+    [
+      permissions.canManageShop,
+      persistShopState,
+      shopArchivedProducts,
+      shopCategories,
+      shopDraftProducts,
+      shopProducts,
+      showAlert
+    ]
   );
 
   const resolveNextProductId = useCallback(() => {
     const maxCatalogId = shopProducts.reduce((max, product) => Math.max(max, Number(product.id) || 0), 0);
     const maxDraftId = shopDraftProducts.reduce((max, product) => Math.max(max, Number(product.id) || 0), 0);
-    return Math.max(maxCatalogId, maxDraftId) + 1;
-  }, [shopDraftProducts, shopProducts]);
+    const maxArchivedId = shopArchivedProducts.reduce((max, product) => Math.max(max, Number(product.id) || 0), 0);
+    return Math.max(maxCatalogId, maxDraftId, maxArchivedId) + 1;
+  }, [shopArchivedProducts, shopDraftProducts, shopProducts]);
 
   const validateProduct = useCallback((product) => {
     if (!product.name) {
@@ -502,27 +537,28 @@ export default function useAdminActions({
         ...normalized,
         id: nextId,
         createdAt: hasId
-          ? (shopProducts.find((product) => product.id === nextId)?.createdAt
-            || shopDraftProducts.find((product) => product.id === nextId)?.createdAt
+          ? (shopProducts.find((product) => Number(product.id) === nextId)?.createdAt
+            || shopDraftProducts.find((product) => Number(product.id) === nextId)?.createdAt
             || normalized.createdAt)
           : normalized.createdAt
       };
 
-      const nextProducts = hasId
-        ? shopProducts.map((product) => (product.id === nextId ? nextProduct : product))
-        : [nextProduct, ...shopProducts];
-      const productExists = shopProducts.some((product) => product.id === nextId);
-      const mergedProducts = productExists ? nextProducts : [nextProduct, ...shopProducts];
-      const nextDraftProducts = shopDraftProducts.filter((product) => product.id !== nextId);
+      const catalogExists = shopProducts.some((product) => Number(product.id) === nextId);
+      const nextProducts = catalogExists
+        ? shopProducts.map((product) => (Number(product.id) === nextId ? nextProduct : product))
+        : [nextProduct, ...shopProducts.filter((product) => Number(product.id) !== nextId)];
+      const nextDraftProducts = shopDraftProducts.filter((product) => Number(product.id) !== nextId);
+      const nextArchivedProducts = shopArchivedProducts.filter((product) => Number(product.id) !== nextId);
       const nextCategories = shopCategories.includes(nextProduct.category)
         ? shopCategories
         : [...shopCategories, nextProduct.category];
 
       return persistShopState({
         categories: nextCategories,
-        products: mergedProducts,
+        products: nextProducts,
         draftProducts: nextDraftProducts,
-        successMessage: hasId ? 'Товар оновлено.' : 'Товар опубліковано.'
+        archivedProducts: nextArchivedProducts,
+        successMessage: catalogExists ? 'Товар оновлено.' : 'Товар опубліковано.'
       });
     },
     [
@@ -530,6 +566,7 @@ export default function useAdminActions({
       persistShopState,
       resolveNextProductId,
       shopCategories,
+      shopArchivedProducts,
       shopDraftProducts,
       shopProducts,
       showAlert,
@@ -560,16 +597,17 @@ export default function useAdminActions({
         ...normalized,
         id: nextId,
         createdAt: hasId
-          ? (shopDraftProducts.find((product) => product.id === nextId)?.createdAt
-            || shopProducts.find((product) => product.id === nextId)?.createdAt
+          ? (shopDraftProducts.find((product) => Number(product.id) === nextId)?.createdAt
+            || shopProducts.find((product) => Number(product.id) === nextId)?.createdAt
             || normalized.createdAt)
           : normalized.createdAt
       };
 
-      const draftExists = shopDraftProducts.some((product) => product.id === nextId);
+      const draftExists = shopDraftProducts.some((product) => Number(product.id) === nextId);
       const nextDraftProducts = draftExists
-        ? shopDraftProducts.map((product) => (product.id === nextId ? nextDraft : product))
-        : [nextDraft, ...shopDraftProducts];
+        ? shopDraftProducts.map((product) => (Number(product.id) === nextId ? nextDraft : product))
+        : [nextDraft, ...shopDraftProducts.filter((product) => Number(product.id) !== nextId)];
+      const nextArchivedProducts = shopArchivedProducts.filter((product) => Number(product.id) !== nextId);
 
       const nextCategories = nextDraft.category && !shopCategories.includes(nextDraft.category)
         ? [...shopCategories, nextDraft.category]
@@ -578,10 +616,20 @@ export default function useAdminActions({
       return persistShopState({
         categories: nextCategories,
         draftProducts: nextDraftProducts,
+        archivedProducts: nextArchivedProducts,
         successMessage: 'Чернетку товару збережено.'
       });
     },
-    [permissions.canManageShop, persistShopState, resolveNextProductId, shopCategories, shopDraftProducts, shopProducts, showAlert]
+    [
+      permissions.canManageShop,
+      persistShopState,
+      resolveNextProductId,
+      shopArchivedProducts,
+      shopCategories,
+      shopDraftProducts,
+      shopProducts,
+      showAlert
+    ]
   );
 
   const onDeleteProduct = useCallback(
@@ -591,17 +639,30 @@ export default function useAdminActions({
         return false;
       }
 
-      const nextProducts = shopProducts.filter((product) => product.id !== productId);
+      const targetId = Number(productId);
+      const productToArchive = shopProducts.find((product) => Number(product.id) === targetId);
+      const nextProducts = shopProducts.filter((product) => Number(product.id) !== targetId);
       if (nextProducts.length === shopProducts.length) {
         return false;
       }
 
+      const archivedProduct = {
+        ...productToArchive,
+        archivedAt: new Date().toISOString(),
+        archivedFrom: 'catalog'
+      };
+      const nextArchivedProducts = [
+        archivedProduct,
+        ...shopArchivedProducts.filter((product) => Number(product.id) !== targetId)
+      ];
+
       return persistShopState({
         products: nextProducts,
-        successMessage: 'Товар видалено.'
+        archivedProducts: nextArchivedProducts,
+        successMessage: 'Товар перенесено в архів.'
       });
     },
-    [permissions.canManageShop, persistShopState, shopProducts, showAlert]
+    [permissions.canManageShop, persistShopState, shopArchivedProducts, shopProducts, showAlert]
   );
 
   const onDeleteDraftProduct = useCallback(
@@ -611,17 +672,110 @@ export default function useAdminActions({
         return false;
       }
 
-      const nextDraftProducts = shopDraftProducts.filter((product) => product.id !== productId);
+      const targetId = Number(productId);
+      const draftToArchive = shopDraftProducts.find((product) => Number(product.id) === targetId);
+      const nextDraftProducts = shopDraftProducts.filter((product) => Number(product.id) !== targetId);
       if (nextDraftProducts.length === shopDraftProducts.length) {
         return false;
       }
 
+      const archivedProduct = {
+        ...draftToArchive,
+        archivedAt: new Date().toISOString(),
+        archivedFrom: 'draft'
+      };
+      const nextArchivedProducts = [
+        archivedProduct,
+        ...shopArchivedProducts.filter((product) => Number(product.id) !== targetId)
+      ];
+
       return persistShopState({
         draftProducts: nextDraftProducts,
-        successMessage: 'Чернетку видалено.'
+        archivedProducts: nextArchivedProducts,
+        successMessage: 'Товар перенесено в архів.'
       });
     },
-    [permissions.canManageShop, persistShopState, shopDraftProducts, showAlert]
+    [permissions.canManageShop, persistShopState, shopArchivedProducts, shopDraftProducts, showAlert]
+  );
+
+  const onRestoreArchivedProduct = useCallback(
+    async (productId) => {
+      if (!permissions.canManageShop) {
+        showAlert('danger', 'У вас немає прав на модерацію магазину.');
+        return false;
+      }
+
+      const targetId = Number(productId);
+      const archivedProduct = shopArchivedProducts.find((product) => Number(product.id) === targetId);
+      if (!archivedProduct) {
+        return false;
+      }
+
+      const cleanProduct = sanitizeShopProduct({
+        ...archivedProduct,
+        archivedAt: null,
+        archivedFrom: ''
+      });
+      const nextArchivedProducts = shopArchivedProducts.filter((product) => Number(product.id) !== targetId);
+      const nextCategories = shopCategories.includes(cleanProduct.category)
+        ? shopCategories
+        : [...shopCategories, cleanProduct.category];
+      const restoreToDrafts = archivedProduct.archivedFrom === 'draft';
+
+      if (restoreToDrafts) {
+        const nextDraftProducts = [
+          cleanProduct,
+          ...shopDraftProducts.filter((product) => Number(product.id) !== targetId)
+        ];
+        return persistShopState({
+          categories: nextCategories,
+          draftProducts: nextDraftProducts,
+          archivedProducts: nextArchivedProducts,
+          successMessage: 'Товар відновлено в чернетки.'
+        });
+      }
+
+      const nextProducts = [
+        cleanProduct,
+        ...shopProducts.filter((product) => Number(product.id) !== targetId)
+      ];
+      return persistShopState({
+        categories: nextCategories,
+        products: nextProducts,
+        archivedProducts: nextArchivedProducts,
+        successMessage: 'Товар відновлено в каталог.'
+      });
+    },
+    [
+      permissions.canManageShop,
+      persistShopState,
+      shopArchivedProducts,
+      shopCategories,
+      shopDraftProducts,
+      shopProducts,
+      showAlert
+    ]
+  );
+
+  const onDeleteArchivedProduct = useCallback(
+    async (productId) => {
+      if (!permissions.canManageShop) {
+        showAlert('danger', 'У вас немає прав на модерацію магазину.');
+        return false;
+      }
+
+      const targetId = Number(productId);
+      const nextArchivedProducts = shopArchivedProducts.filter((product) => Number(product.id) !== targetId);
+      if (nextArchivedProducts.length === shopArchivedProducts.length) {
+        return false;
+      }
+
+      return persistShopState({
+        archivedProducts: nextArchivedProducts,
+        successMessage: 'Товар видалено з архіву назавжди.'
+      });
+    },
+    [permissions.canManageShop, persistShopState, shopArchivedProducts, showAlert]
   );
 
   return {
@@ -639,6 +793,8 @@ export default function useAdminActions({
     onSaveProduct,
     onDeleteProduct,
     onSaveDraftProduct,
-    onDeleteDraftProduct
+    onDeleteDraftProduct,
+    onRestoreArchivedProduct,
+    onDeleteArchivedProduct
   };
 }

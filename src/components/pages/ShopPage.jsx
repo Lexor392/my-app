@@ -20,6 +20,7 @@ export default function ShopPage({ products, categories, onAddToCart }) {
   const [selectedProductId, setSelectedProductId] = useState(null);
   const [activeImageIndex, setActiveImageIndex] = useState(0);
   const [fullscreenImage, setFullscreenImage] = useState('');
+  const [detailTab, setDetailTab] = useState('description');
 
   const selectedProduct = useMemo(
     () => products.find((product) => product.id === selectedProductId) || null,
@@ -68,12 +69,14 @@ export default function ShopPage({ products, categories, onAddToCart }) {
   const openProduct = (productId) => {
     setSelectedProductId(productId);
     setActiveImageIndex(0);
+    setDetailTab('description');
   };
 
   const closeProduct = () => {
     setSelectedProductId(null);
     setActiveImageIndex(0);
     setFullscreenImage('');
+    setDetailTab('description');
   };
 
   const showPrevImage = () => {
@@ -101,8 +104,8 @@ export default function ShopPage({ products, categories, onAddToCart }) {
     return (
       <>
         <div className="card shadow-sm shop-product-page">
-          <div className="card-body d-flex flex-column gap-4">
-            <div className="d-flex justify-content-between align-items-center flex-wrap gap-2">
+          <div className="card-body d-flex flex-column gap-3">
+            <div className="d-flex justify-content-between align-items-center flex-wrap gap-2 shop-detail-head">
               <button type="button" className="btn btn-outline-primary" onClick={closeProduct}>
                 <i className="bi bi-arrow-left me-2" /> До каталогу
               </button>
@@ -113,7 +116,7 @@ export default function ShopPage({ products, categories, onAddToCart }) {
               </div>
             </div>
 
-            <div className="shop-product-layout">
+            <div className="shop-product-layout shop-product-main-layout">
               <div className="shop-gallery-wrap">
                 <div className="shop-gallery-main">
                   {activeImage ? (
@@ -155,11 +158,11 @@ export default function ShopPage({ products, categories, onAddToCart }) {
                 )}
               </div>
 
-              <div className="shop-product-info">
-                <h3>{selectedProduct.name}</h3>
-                <p className="text-body-secondary mb-3">
-                  {selectedProduct.description || 'Опис для цього товару ще не додано. Оновіть картку в адмін-панелі.'}
-                </p>
+              <aside className="shop-buy-card">
+                <div>
+                  <h3 className="mb-1">{selectedProduct.name}</h3>
+                  <div className="small text-body-secondary">Код товару: TF-{selectedProduct.id}</div>
+                </div>
 
                 <div className="shop-product-price-row">
                   <div>
@@ -175,28 +178,91 @@ export default function ShopPage({ products, categories, onAddToCart }) {
                     )}
                   </div>
 
-                  <button type="button" className="btn btn-primary" onClick={() => onAddToCart(selectedProduct.id)}>
-                    <i className="bi bi-cart-plus me-2" />
-                    У кошик
+                  <button
+                    type="button"
+                    className="btn btn-primary shop-buy-btn"
+                    aria-label="Додати в кошик"
+                    title="Додати в кошик"
+                    onClick={() => onAddToCart(selectedProduct.id)}
+                  >
+                    <i className="bi bi-cart-plus" />
                   </button>
                 </div>
 
-                <div className="shop-product-specs mt-4">
-                  <h6 className="mb-3">Характеристики</h6>
+                <div className="d-flex flex-column gap-2">
+                  <div className="small text-body-secondary">Доставка та оплата</div>
+                  <div className="shop-quick-info-row">
+                    <span><i className="bi bi-truck me-2" />Відправка щодня</span>
+                    <strong>Нова Пошта / Укрпошта</strong>
+                  </div>
+                  <div className="shop-quick-info-row">
+                    <span><i className="bi bi-credit-card me-2" />Оплата</span>
+                    <strong>Онлайн або післяплата</strong>
+                  </div>
+                  <div className="shop-quick-info-row">
+                    <span><i className="bi bi-arrow-repeat me-2" />Повернення</span>
+                    <strong>14 днів</strong>
+                  </div>
+                </div>
+              </aside>
+            </div>
+
+            <div className="shop-detail-tabs" role="tablist" aria-label="Інформація про товар">
+              <button
+                type="button"
+                className={`shop-detail-tab ${detailTab === 'description' ? 'active' : ''}`}
+                onClick={() => setDetailTab('description')}
+              >
+                Опис
+              </button>
+              <button
+                type="button"
+                className={`shop-detail-tab ${detailTab === 'specs' ? 'active' : ''}`}
+                onClick={() => setDetailTab('specs')}
+              >
+                Характеристики
+              </button>
+              <button
+                type="button"
+                className={`shop-detail-tab ${detailTab === 'delivery' ? 'active' : ''}`}
+                onClick={() => setDetailTab('delivery')}
+              >
+                Доставка та оплата
+              </button>
+            </div>
+
+            <div className="shop-detail-panel">
+              {detailTab === 'description' && (
+                <div className="shop-detail-copy">
+                  {selectedProduct.description
+                    ? selectedProduct.description
+                    : 'Опис для цього товару ще не додано. Оновіть картку в адмін-панелі.'}
+                </div>
+              )}
+
+              {detailTab === 'specs' && (
+                <div className="d-flex flex-column gap-2">
                   {productSpecs.length === 0 ? (
                     <div className="text-body-secondary">Характеристики ще не заповнені.</div>
                   ) : (
-                    <div className="d-flex flex-column gap-2">
-                      {productSpecs.map((spec) => (
-                        <div className="shop-spec-row" key={spec.id || `${spec.key}-${spec.value}`}>
-                          <span>{spec.key}</span>
-                          <strong>{spec.value}</strong>
-                        </div>
-                      ))}
-                    </div>
+                    productSpecs.map((spec) => (
+                      <div className="shop-spec-row" key={spec.id || `${spec.key}-${spec.value}`}>
+                        <span>{spec.key}</span>
+                        <strong>{spec.value}</strong>
+                      </div>
+                    ))
                   )}
                 </div>
-              </div>
+              )}
+
+              {detailTab === 'delivery' && (
+                <ul className="shop-delivery-list mb-0">
+                  <li>Відправлення щодня через Нову Пошту або Укрпошту.</li>
+                  <li>Оплата онлайн або післяплата при отриманні.</li>
+                  <li>Повернення товару протягом 14 днів з моменту покупки.</li>
+                  <li>Підтримка менеджера: 09:00-20:00, без вихідних.</li>
+                </ul>
+              )}
             </div>
           </div>
         </div>
@@ -314,8 +380,7 @@ export default function ShopPage({ products, categories, onAddToCart }) {
                   <span className="badge text-bg-light">{product.category}</span>
                 </div>
 
-                <h6 className="card-title mb-2">{product.name}</h6>
-                <p className="shop-card-desc mb-3">{product.description || 'Натисніть, щоб переглянути деталі товару.'}</p>
+                <h6 className="card-title mb-3">{product.name}</h6>
 
                 <div className="d-flex justify-content-between align-items-end mt-auto pt-2 gap-2">
                   <div>
@@ -331,28 +396,17 @@ export default function ShopPage({ products, categories, onAddToCart }) {
                     )}
                   </div>
 
-                  <div className="d-flex gap-2">
-                    <button
-                      className="btn btn-outline-primary btn-sm"
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        openProduct(product.id);
-                      }}
-                    >
-                      Переглянути
-                    </button>
-                    <button
-                      className="btn btn-primary btn-sm"
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onAddToCart(product.id);
-                      }}
-                    >
-                      У кошик
-                    </button>
-                  </div>
+                  <button
+                    className="btn btn-primary btn-sm"
+                    type="button"
+                    aria-label="Додати в кошик"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onAddToCart(product.id);
+                    }}
+                  >
+                    <i className="bi bi-cart-plus" />
+                  </button>
                 </div>
               </div>
             </article>

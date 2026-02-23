@@ -1,7 +1,11 @@
-﻿import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { getProductFinalPrice, isProductNew } from '../../../data/constants';
 
 const PAGE_SIZE = 10;
+const MAX_IMAGE_DIMENSION = 1280;
+const MIN_IMAGE_DIMENSION = 480;
+const TARGET_IMAGE_DATA_URL_SIZE = 72 * 1024;
+const MIN_IMAGE_QUALITY = 0.45;
 
 const createSpecDraft = () => ({
   id: `spec-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -91,33 +95,127 @@ const buildProductPayload = (draft, { forDraft = false } = {}) => {
   };
 };
 
-const readFilesAsDataUrls = async (files) => {
-  const fileList = Array.from(files || []);
+const fileToDataUrl = (file, onProgress) =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onprogress = (event) => {
+      if (!event.lengthComputable || typeof onProgress !== 'function') {
+        return;
+      }
+      const percent = Math.round((event.loaded / event.total) * 100);
+      onProgress(percent);
+    };
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error(`Не вдалося прочитати файл ${file.name}`));
+    reader.readAsDataURL(file);
+  });
 
-  const readers = fileList.map((file) =>
-    new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result || ''));
-      reader.onerror = () => reject(new Error(`Не вдалося прочитати файл ${file.name}`));
-      reader.readAsDataURL(file);
-    })
-  );
+const loadImageElement = (dataUrl) =>
+  new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error('Не вдалося обробити зображення.'));
+    image.src = dataUrl;
+  });
 
-  const loaded = await Promise.all(readers);
-  return loaded.filter(Boolean);
+const optimizeImageDataUrl = async (dataUrl, onProgress) => {
+  const image = await loadImageElement(dataUrl);
+  const ratio = Math.min(1, MAX_IMAGE_DIMENSION / Math.max(image.width, image.height));
+  let width = Math.max(1, Math.round(image.width * ratio));
+  let height = Math.max(1, Math.round(image.height * ratio));
+
+  const canvas = document.createElement('canvas');
+  const context = canvas.getContext('2d');
+  if (!context) {
+    return dataUrl;
+  }
+
+  let optimized = dataUrl;
+  if (typeof onProgress === 'function') {
+    onProgress(78);
+  }
+  for (let resizePass = 0; resizePass < 6; resizePass += 1) {
+    canvas.width = width;
+    canvas.height = height;
+    context.clearRect(0, 0, width, height);
+    context.drawImage(image, 0, 0, width, height);
+
+    let quality = 0.88;
+    for (let qualityPass = 0; qualityPass < 6; qualityPass += 1) {
+      optimized = canvas.toDataURL('image/jpeg', quality);
+      if (optimized.length <= TARGET_IMAGE_DATA_URL_SIZE) {
+        if (typeof onProgress === 'function') {
+          onProgress(96);
+        }
+        return optimized;
+      }
+
+      if (quality <= MIN_IMAGE_QUALITY) {
+        break;
+      }
+      quality = Number((quality - 0.1).toFixed(2));
+    }
+
+    if (width <= MIN_IMAGE_DIMENSION && height <= MIN_IMAGE_DIMENSION) {
+      break;
+    }
+
+    width = Math.max(MIN_IMAGE_DIMENSION, Math.round(width * 0.82));
+    height = Math.max(MIN_IMAGE_DIMENSION, Math.round(height * 0.82));
+  }
+
+  if (typeof onProgress === 'function') {
+    onProgress(96);
+  }
+  return optimized;
+};
+
+const createUploadDraft = (file) => ({
+  id: `upload-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  name: file.name,
+  progress: 0,
+  status: 'uploading',
+  error: ''
+});
+
+const createDraftSignature = (draft) => {
+  const normalizedSpecs = (Array.isArray(draft?.specs) ? draft.specs : [])
+    .map((spec) => ({
+      key: String(spec?.key || '').trim(),
+      value: String(spec?.value || '').trim()
+    }))
+    .filter((spec) => spec.key || spec.value);
+
+  return JSON.stringify({
+    id: Number.isFinite(Number(draft?.id)) ? Number(draft.id) : null,
+    name: String(draft?.name || '').trim(),
+    images: (Array.isArray(draft?.images) ? draft.images : [])
+      .map((item) => String(item || '').trim())
+      .filter(Boolean),
+    description: String(draft?.description || '').trim(),
+    specs: normalizedSpecs,
+    price: String(draft?.price ?? '').trim(),
+    discountPercent: String(draft?.discountPercent ?? '').trim(),
+    isNew: Boolean(draft?.isNew),
+    newDays: String(draft?.newDays ?? '').trim(),
+    category: String(draft?.category || '').trim()
+  });
 };
 
 export default function AdminShopSection({
   shopCategories,
   shopProducts,
   shopDraftProducts,
+  shopArchivedProducts = [],
   onAddCategory,
   onRenameCategory,
   onDeleteCategory,
   onSaveProduct,
   onDeleteProduct,
   onSaveDraftProduct,
-  onDeleteDraftProduct
+  onDeleteDraftProduct,
+  onRestoreArchivedProduct,
+  onDeleteArchivedProduct
 }) {
   const [activeTab, setActiveTab] = useState('catalog');
   const [search, setSearch] = useState('');
@@ -131,9 +229,14 @@ export default function AdminShopSection({
   const [productStep, setProductStep] = useState(0);
   const [productDraft, setProductDraft] = useState(createProductDraft(shopCategories));
   const [wizardMode, setWizardMode] = useState('create');
+  const [initialDraftSignature, setInitialDraftSignature] = useState('');
+  const [isCloseConfirmOpen, setCloseConfirmOpen] = useState(false);
+  const [imageUploads, setImageUploads] = useState([]);
   const [uploadingFiles, setUploadingFiles] = useState(false);
 
-  const sourceList = activeTab === 'drafts' ? shopDraftProducts : shopProducts;
+  const sourceList = activeTab === 'drafts'
+    ? shopDraftProducts
+    : (activeTab === 'archive' ? shopArchivedProducts : shopProducts);
 
   const filteredProducts = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -161,25 +264,38 @@ export default function AdminShopSection({
 
   const stepTitles = ['Основне', 'Опис', 'Характеристики', 'Ціна та категорія'];
 
+  const hasUnsavedChanges = createDraftSignature(productDraft) !== initialDraftSignature;
+
   const resetWizard = () => {
     setProductStep(0);
     setWizardMode('create');
     setProductDraft(createProductDraft(shopCategories));
+    setInitialDraftSignature('');
+    setCloseConfirmOpen(false);
+    setImageUploads([]);
     setUploadingFiles(false);
     setProductModalOpen(false);
   };
 
   const openCreateWizard = () => {
+    const nextDraft = createProductDraft(shopCategories);
     setWizardMode('create');
-    setProductDraft(createProductDraft(shopCategories));
+    setProductDraft(nextDraft);
+    setInitialDraftSignature(createDraftSignature(nextDraft));
+    setCloseConfirmOpen(false);
     setProductStep(0);
+    setImageUploads([]);
     setProductModalOpen(true);
   };
 
   const openEditWizard = (product, mode = 'edit') => {
+    const nextDraft = toProductDraft(product, shopCategories);
     setWizardMode(mode);
-    setProductDraft(toProductDraft(product, shopCategories));
+    setProductDraft(nextDraft);
+    setInitialDraftSignature(createDraftSignature(nextDraft));
+    setCloseConfirmOpen(false);
     setProductStep(0);
+    setImageUploads([]);
     setProductModalOpen(true);
   };
 
@@ -192,15 +308,44 @@ export default function AdminShopSection({
     }
   };
 
-  const submitProduct = async (event) => {
-    event.preventDefault();
-
+  const saveProductAndClose = async () => {
     const payload = buildProductPayload(productDraft, { forDraft: false });
-    const saved = await onSaveProduct(payload);
+    const saved = wizardMode === 'draft'
+      ? await onSaveDraftProduct(payload)
+      : await onSaveProduct(payload);
     if (saved) {
       resetWizard();
-      setActiveTab('catalog');
+      setActiveTab(wizardMode === 'draft' ? 'drafts' : 'catalog');
     }
+    return saved;
+  };
+
+  const submitProduct = async (event) => {
+    event.preventDefault();
+    await saveProductAndClose();
+  };
+
+  const handleProductCloseRequest = () => {
+    if (!hasUnsavedChanges) {
+      resetWizard();
+      return;
+    }
+
+    setCloseConfirmOpen(true);
+  };
+
+  const handleDiscardChanges = () => {
+    resetWizard();
+  };
+
+  const handleConfirmSaveChanges = async () => {
+    setCloseConfirmOpen(false);
+    await saveProductAndClose();
+  };
+
+  const handleConfirmSaveAsDraft = async () => {
+    setCloseConfirmOpen(false);
+    await saveAsDraftAndClose();
   };
 
   const goNextStep = () => {
@@ -225,14 +370,35 @@ export default function AdminShopSection({
       return;
     }
 
+    const file = files[0];
+    event.target.value = '';
+    const hasLimitReached = (productDraft.images || []).length >= 8;
+    if (hasLimitReached) {
+      return;
+    }
+
+    const uploadItem = createUploadDraft(file);
+    const updateUpload = (patch) => {
+      setImageUploads((prev) => prev.map((entry) => (entry.id === uploadItem.id ? { ...entry, ...patch } : entry)));
+    };
+
+    setImageUploads((prev) => [uploadItem, ...prev].slice(0, 14));
     setUploadingFiles(true);
     try {
-      const loaded = await readFilesAsDataUrls(files);
+      const loaded = await fileToDataUrl(file, (progress) => updateUpload({ progress: Math.min(70, progress) }));
+      updateUpload({ progress: 78 });
+      const optimized = await optimizeImageDataUrl(loaded, (progress) => updateUpload({ progress }));
       setProductDraft((prev) => ({
         ...prev,
-        images: [...prev.images, ...loaded].slice(0, 8)
+        images: [...prev.images, optimized].slice(0, 8)
       }));
-      event.target.value = '';
+      updateUpload({ progress: 100, status: 'done' });
+    } catch (error) {
+      updateUpload({
+        progress: 100,
+        status: 'error',
+        error: String(error?.message || 'Не вдалося завантажити файл.')
+      });
     } finally {
       setUploadingFiles(false);
     }
@@ -270,9 +436,10 @@ export default function AdminShopSection({
     () => shopCategories.map((category) => ({
       category,
       productsCount: shopProducts.filter((product) => product.category === category).length,
-      draftsCount: shopDraftProducts.filter((product) => product.category === category).length
+      draftsCount: shopDraftProducts.filter((product) => product.category === category).length,
+      archivedCount: shopArchivedProducts.filter((product) => product.category === category).length
     })),
-    [shopCategories, shopDraftProducts, shopProducts]
+    [shopArchivedProducts, shopCategories, shopDraftProducts, shopProducts]
   );
 
   return (
@@ -323,6 +490,16 @@ export default function AdminShopSection({
               >
                 Чернетки ({shopDraftProducts.length})
               </button>
+              <button
+                type="button"
+                className={`btn btn-sm ${activeTab === 'archive' ? 'btn-primary' : 'btn-outline-primary'}`}
+                onClick={() => {
+                  setActiveTab('archive');
+                  setPage(1);
+                }}
+              >
+                Архів ({shopArchivedProducts.length})
+              </button>
             </div>
 
             <input
@@ -336,7 +513,7 @@ export default function AdminShopSection({
             />
           </div>
 
-          <div className="row g-3">
+          <div className="admin-products-grid">
             {pagination.items.map((product) => {
               const finalPrice = getProductFinalPrice(product);
               const hasDiscount = finalPrice < product.price;
@@ -345,7 +522,7 @@ export default function AdminShopSection({
                 : product.image;
 
               return (
-                <div className="col-md-6 col-xl-4" key={`${activeTab}-${product.id}`}>
+                <div className="admin-products-grid-item" key={`${activeTab}-${product.id}`}>
                   <article className="admin-product-card admin-shop-card h-100">
                     <img src={image} alt={product.name} className="admin-product-image" />
 
@@ -353,6 +530,7 @@ export default function AdminShopSection({
                       {isProductNew(product) && <span className="badge product-badge-new">Новинка</span>}
                       {hasDiscount && <span className="badge product-badge-discount">-{product.discountPercent}%</span>}
                       {activeTab === 'drafts' && <span className="badge text-bg-secondary">Чернетка</span>}
+                      {activeTab === 'archive' && <span className="badge text-bg-dark">Архів</span>}
                     </div>
 
                     <div>
@@ -361,56 +539,77 @@ export default function AdminShopSection({
                       <div className="small text-primary fw-semibold mt-1">{finalPrice} балів</div>
                     </div>
 
-                    <div className="d-flex gap-2 flex-wrap mt-auto">
-                      <button
-                        type="button"
-                        className="btn btn-sm btn-outline-primary"
-                        onClick={() => openEditWizard(product, activeTab === 'drafts' ? 'draft' : 'edit')}
-                      >
-                        <i className="bi bi-pencil-square me-1" />
-                        Редагувати
-                      </button>
-
-                      {activeTab === 'drafts' && (
+                    {activeTab === 'archive' ? (
+                      <div className="d-flex gap-2 flex-wrap mt-auto">
                         <button
                           type="button"
-                          className="btn btn-sm btn-primary"
-                          onClick={async () => {
-                            const saved = await onSaveProduct(
-                              buildProductPayload(toProductDraft(product, shopCategories), { forDraft: false })
-                            );
-                            if (saved) {
-                              setActiveTab('catalog');
+                          className="btn btn-sm btn-outline-primary"
+                          onClick={() => onRestoreArchivedProduct(product.id)}
+                        >
+                          <i className="bi bi-arrow-counterclockwise me-1" />
+                          Відновити
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-outline-danger"
+                          onClick={() => onDeleteArchivedProduct(product.id)}
+                        >
+                          <i className="bi bi-trash me-1" />
+                          Видалити назавжди
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="d-flex gap-2 flex-wrap mt-auto">
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-outline-primary"
+                          onClick={() => openEditWizard(product, activeTab === 'drafts' ? 'draft' : 'edit')}
+                        >
+                          <i className="bi bi-pencil-square me-1" />
+                          Редагувати
+                        </button>
+
+                        {activeTab === 'drafts' && (
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-primary"
+                            onClick={async () => {
+                              const saved = await onSaveProduct(
+                                buildProductPayload(toProductDraft(product, shopCategories), { forDraft: false })
+                              );
+                              if (saved) {
+                                setActiveTab('catalog');
+                              }
+                            }}
+                          >
+                            <i className="bi bi-send-check me-1" />
+                            Опублікувати
+                          </button>
+                        )}
+
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-outline-danger"
+                          onClick={() => {
+                            if (activeTab === 'drafts') {
+                              onDeleteDraftProduct(product.id);
+                            } else {
+                              onDeleteProduct(product.id);
                             }
                           }}
                         >
-                          <i className="bi bi-send-check me-1" />
-                          Опублікувати
+                          <i className="bi bi-archive me-1" />
+                          В архів
                         </button>
-                      )}
-
-                      <button
-                        type="button"
-                        className="btn btn-sm btn-outline-danger"
-                        onClick={() => {
-                          if (activeTab === 'drafts') {
-                            onDeleteDraftProduct(product.id);
-                          } else {
-                            onDeleteProduct(product.id);
-                          }
-                        }}
-                      >
-                        <i className="bi bi-trash me-1" />
-                        Видалити
-                      </button>
-                    </div>
+                      </div>
+                    )}
                   </article>
                 </div>
               );
             })}
 
             {pagination.items.length === 0 && (
-              <div className="col-12">
+              <div className="admin-products-grid-empty">
                 <div className="text-body-secondary">Товари не знайдено.</div>
               </div>
             )}
@@ -490,7 +689,7 @@ export default function AdminShopSection({
                           }))}
                       />
                       <div className="small text-body-secondary">
-                        Товарів: {entry.productsCount} | Чернеток: {entry.draftsCount}
+                        Товарів: {entry.productsCount} | Чернеток: {entry.draftsCount} | Архів: {entry.archivedCount}
                       </div>
                     </div>
 
@@ -519,7 +718,7 @@ export default function AdminShopSection({
       )}
 
       {isProductModalOpen && (
-        <div className="modal-overlay" onClick={saveAsDraftAndClose}>
+        <div className="modal-overlay">
           <div className="task-modal card shadow-lg" onClick={(event) => event.stopPropagation()}>
             <div className="card-body d-flex flex-column gap-3">
               <div className="d-flex justify-content-between align-items-center gap-2">
@@ -529,17 +728,29 @@ export default function AdminShopSection({
                   </h5>
                   <div className="small text-body-secondary">Крок {productStep + 1} з {stepTitles.length}: {stepTitles[productStep]}</div>
                 </div>
-                <button type="button" className="btn btn-sm btn-outline-secondary" onClick={saveAsDraftAndClose}>
+                <button type="button" className="btn btn-sm btn-outline-secondary" onClick={handleProductCloseRequest}>
                   <i className="bi bi-x-lg" />
                 </button>
               </div>
 
-              <div className="wizard-stepper">
+              <div className="wizard-dots" aria-label="Етапи форми товару">
                 {stepTitles.map((label, idx) => (
-                  <div key={label} className={`wizard-step ${idx <= productStep ? 'active' : ''}`}>
-                    <span>{idx + 1}</span>
-                    <small>{label}</small>
-                  </div>
+                  <Fragment key={label}>
+                    <button
+                      type="button"
+                      className={`wizard-dot ${idx <= productStep ? 'active' : ''} ${idx === productStep ? 'current' : ''}`}
+                      title={label}
+                      aria-label={`${idx + 1}. ${label}`}
+                      onClick={() => setProductStep(idx)}
+                    >
+                      {idx + 1}
+                    </button>
+                    {idx < stepTitles.length - 1 && (
+                      <span className={`wizard-dot-arrow ${idx < productStep ? 'active' : ''}`} aria-hidden="true">
+                        <i className="bi bi-arrow-right" />
+                      </span>
+                    )}
+                  </Fragment>
                 ))}
               </div>
 
@@ -562,14 +773,35 @@ export default function AdminShopSection({
                         type="file"
                         className="form-control"
                         accept="image/*"
-                        multiple
                         onChange={handleImageUpload}
-                        disabled={uploadingFiles}
+                        disabled={uploadingFiles || productDraft.images.length >= 8}
                       />
                       <div className="small text-body-secondary mt-1">
-                        Підтримується до 8 фото. {uploadingFiles ? 'Завантаження...' : 'Файли завантажуються у товар напряму.'}
+                        Завантаження по одному файлу, максимум 8 фото.
                       </div>
                     </div>
+
+                    {imageUploads.length > 0 && (
+                      <div className="d-flex flex-column gap-2">
+                        {imageUploads.map((upload) => (
+                          <div className="admin-upload-item" key={upload.id}>
+                            <div className="d-flex justify-content-between align-items-center gap-2">
+                              <span className="small text-truncate">{upload.name}</span>
+                              <span className="small text-body-secondary">{upload.progress}%</span>
+                            </div>
+                            <div className="progress admin-upload-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={upload.progress}>
+                              <div
+                                className={`progress-bar ${upload.status === 'error' ? 'bg-danger' : ''}`}
+                                style={{ width: `${upload.progress}%` }}
+                              />
+                            </div>
+                            {upload.status === 'error' && (
+                              <div className="small text-danger">{upload.error}</div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
 
                     <div className="admin-product-images-grid">
                       {productDraft.images.map((image, index) => (
@@ -722,6 +954,38 @@ export default function AdminShopSection({
                   </div>
                 </div>
               </form>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isCloseConfirmOpen && (
+        <div className="modal-overlay">
+          <div className="task-modal card shadow-lg" onClick={(event) => event.stopPropagation()}>
+            <div className="card-body d-flex flex-column gap-3">
+              <h5 className="mb-0">Незбережені зміни</h5>
+              <div className="text-body-secondary">
+                {wizardMode === 'create'
+                  ? 'Зберегти зміни, видалити зміни або відправити товар у чернетки?'
+                  : 'Зберегти зміни чи видалити їх перед закриттям?'}
+              </div>
+
+              <div className="d-flex justify-content-end flex-wrap gap-2">
+                <button type="button" className="btn btn-outline-secondary" onClick={() => setCloseConfirmOpen(false)}>
+                  Назад
+                </button>
+                <button type="button" className="btn btn-outline-danger" onClick={handleDiscardChanges}>
+                  Видалити зміни
+                </button>
+                {wizardMode === 'create' && (
+                  <button type="button" className="btn btn-outline-primary" onClick={handleConfirmSaveAsDraft}>
+                    В чернетку
+                  </button>
+                )}
+                <button type="button" className="btn btn-success" onClick={handleConfirmSaveChanges}>
+                  Зберегти зміни
+                </button>
+              </div>
             </div>
           </div>
         </div>

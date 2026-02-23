@@ -26,6 +26,11 @@ const normalizeShopState = (raw) => {
       .map((product) => sanitizeShopProduct(product))
       .filter((product) => product.name && Number.isFinite(product.price))
     : [];
+  const archivedProductsRaw = Array.isArray(raw?.archivedProducts)
+    ? raw.archivedProducts
+      .map((product) => sanitizeShopProduct(product))
+      .filter((product) => product.name && Number.isFinite(product.price))
+    : [];
 
   const fallbackCategory = safeCategories[0];
   const products = (productsRaw.length > 0 ? productsRaw : DEFAULT_SHOP_PRODUCTS).map((product) => ({
@@ -37,11 +42,16 @@ const normalizeShopState = (raw) => {
     ...product,
     category: safeCategories.includes(product.category) ? product.category : fallbackCategory
   }));
+  const archivedProducts = archivedProductsRaw.map((product) => ({
+    ...product,
+    category: safeCategories.includes(product.category) ? product.category : fallbackCategory
+  }));
 
   return {
     categories: safeCategories,
     products,
-    draftProducts
+    draftProducts,
+    archivedProducts
   };
 };
 
@@ -61,6 +71,7 @@ export default function useShopStore({ sessionUser, currentUser, showAlert }) {
   const [shopCategories, setShopCategories] = useState(DEFAULT_SHOP_CATEGORIES);
   const [shopProducts, setShopProducts] = useState(DEFAULT_SHOP_PRODUCTS);
   const [shopDraftProducts, setShopDraftProducts] = useState([]);
+  const [shopArchivedProducts, setShopArchivedProducts] = useState([]);
   const canManageShop = Boolean(
     currentUser?.isAdmin
       || currentUser?.roles?.includes('shop_moderator')
@@ -85,7 +96,8 @@ export default function useShopStore({ sessionUser, currentUser, showAlert }) {
             const fallback = normalizeShopState({
               categories: DEFAULT_SHOP_CATEGORIES,
               products: DEFAULT_SHOP_PRODUCTS,
-              draftProducts: []
+              draftProducts: [],
+              archivedProducts: []
             });
 
             setDoc(
@@ -94,6 +106,7 @@ export default function useShopStore({ sessionUser, currentUser, showAlert }) {
                 categories: fallback.categories,
                 products: fallback.products,
                 draftProducts: fallback.draftProducts,
+                archivedProducts: fallback.archivedProducts,
                 updatedAt: new Date().toISOString()
               },
               { merge: false }
@@ -105,6 +118,7 @@ export default function useShopStore({ sessionUser, currentUser, showAlert }) {
           setShopCategories(DEFAULT_SHOP_CATEGORIES);
           setShopProducts(DEFAULT_SHOP_PRODUCTS);
           setShopDraftProducts([]);
+          setShopArchivedProducts([]);
           setShopReady(true);
           return;
         }
@@ -119,6 +133,7 @@ export default function useShopStore({ sessionUser, currentUser, showAlert }) {
               categories: normalized.categories,
               products: [],
               draftProducts: normalized.draftProducts,
+              archivedProducts: normalized.archivedProducts,
               updatedAt: new Date().toISOString()
             },
             { merge: false }
@@ -129,6 +144,7 @@ export default function useShopStore({ sessionUser, currentUser, showAlert }) {
           setShopCategories(normalized.categories);
           setShopProducts([]);
           setShopDraftProducts(normalized.draftProducts);
+          setShopArchivedProducts(normalized.archivedProducts);
           setShopReady(true);
           return;
         }
@@ -136,6 +152,7 @@ export default function useShopStore({ sessionUser, currentUser, showAlert }) {
         setShopCategories(normalized.categories);
         setShopProducts(normalized.products);
         setShopDraftProducts(normalized.draftProducts);
+        setShopArchivedProducts(normalized.archivedProducts);
         setShopReady(true);
       },
       () => {
@@ -143,6 +160,7 @@ export default function useShopStore({ sessionUser, currentUser, showAlert }) {
         setShopCategories(DEFAULT_SHOP_CATEGORIES);
         setShopProducts(DEFAULT_SHOP_PRODUCTS);
         setShopDraftProducts([]);
+        setShopArchivedProducts([]);
         showAlert('warning', 'Не вдалося завантажити магазин із бази. Використовуються локальні дані.');
       }
     );
@@ -151,7 +169,7 @@ export default function useShopStore({ sessionUser, currentUser, showAlert }) {
   }, [sessionUser, canManageShop, showAlert]);
 
   const persistShop = useCallback(
-    async ({ categories, products, draftProducts = [], successMessage }) => {
+    async ({ categories, products, draftProducts = [], archivedProducts = [], successMessage }) => {
       if (!canManageShop || !db) {
         showAlert('danger', 'Недостатньо прав для зміни магазину.');
         return false;
@@ -160,7 +178,8 @@ export default function useShopStore({ sessionUser, currentUser, showAlert }) {
       const normalized = normalizeShopState({
         categories,
         products,
-        draftProducts
+        draftProducts,
+        archivedProducts
       });
 
       try {
@@ -170,6 +189,7 @@ export default function useShopStore({ sessionUser, currentUser, showAlert }) {
             categories: normalized.categories,
             products: normalized.products,
             draftProducts: normalized.draftProducts,
+            archivedProducts: normalized.archivedProducts,
             updatedAt: new Date().toISOString()
           },
           { merge: false }
@@ -180,8 +200,18 @@ export default function useShopStore({ sessionUser, currentUser, showAlert }) {
         }
 
         return true;
-      } catch {
-        showAlert('danger', 'Не вдалося зберегти зміни магазину.');
+      } catch (error) {
+        const rawMessage = String(error?.message || '').toLowerCase();
+        const isPayloadTooLarge = rawMessage.includes('payload')
+          || rawMessage.includes('resource-exhausted')
+          || rawMessage.includes('size');
+
+        showAlert(
+          'danger',
+          isPayloadTooLarge
+            ? 'Не вдалося зберегти магазин: завеликі фото. Спробуйте менше або легші зображення.'
+            : 'Не вдалося зберегти зміни магазину.'
+        );
         return false;
       }
     },
@@ -193,6 +223,7 @@ export default function useShopStore({ sessionUser, currentUser, showAlert }) {
     shopCategories,
     shopProducts,
     shopDraftProducts,
+    shopArchivedProducts,
     persistShop
   };
 }
