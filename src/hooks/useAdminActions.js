@@ -1,7 +1,59 @@
 ﻿import { useCallback } from 'react';
-import { addDoc, collection } from 'firebase/firestore';
+import { addDoc, collection, getDocs, limit, query, where } from 'firebase/firestore';
 import { OWNER_EMAIL, sanitizeShopCategory, sanitizeShopProduct, sanitizeTask, sanitizeUser } from '../data/constants';
 import { db } from '../lib/firebase';
+
+const USER_ACTIVITY_COLLECTION = 'userActivity';
+const MAX_LOG_ROWS = 1200;
+
+const formatLogDate = (iso) => {
+  const parsed = Date.parse(iso || '');
+  if (!Number.isFinite(parsed)) {
+    return String(iso || '');
+  }
+
+  return new Date(parsed).toLocaleString('uk-UA', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  });
+};
+
+const formatLogRow = (payload) => {
+  const type = String(payload?.type || '').trim();
+  const count = Number(payload?.c || 0);
+  const amount = Number(payload?.a || 0);
+  const delta = Number(payload?.d || 0);
+  const next = Number(payload?.n || 0);
+
+  switch (type) {
+    case 'status_online':
+      return 'Статус: онлайн';
+    case 'status_offline':
+      return 'Статус: офлайн';
+    case 'points':
+      return `Баланс: ${delta >= 0 ? '+' : ''}${delta}, новий баланс ${next}`;
+    case 'boards_add':
+      return `Дошки: додано ${count}`;
+    case 'boards_del':
+      return `Дошки: видалено ${count}`;
+    case 'tasks_add':
+      return `Записи/завдання: додано ${count}`;
+    case 'tasks_del':
+      return `Записи/завдання: видалено ${count}`;
+    case 'purchases_add':
+      return `Покупки: нових ${count}`;
+    case 'ledger_topup':
+      return `Поповнення балансу: +${amount} (${count} запис.)`;
+    case 'ledger_purchase':
+      return `Списання за покупки: -${amount} (${count} запис.)`;
+    default:
+      return `Подія: ${type || 'невідомо'}`;
+  }
+};
 
 export default function useAdminActions({
   currentUser,
@@ -338,6 +390,79 @@ export default function useAdminActions({
         successMessage: 'Позначку знято.'
       }),
     [withTargetUser]
+  );
+
+  const onDownloadUserLogs = useCallback(
+    async (userId) => {
+      if (!permissions.canViewUsers && !permissions.canManageUsers && !permissions.canReviewTasks) {
+        showAlert('danger', 'У вас немає прав для перегляду логів.');
+        return false;
+      }
+
+      if (!db) {
+        showAlert('danger', 'База даних недоступна.');
+        return false;
+      }
+
+      const target = allUsers.find((user) => user.id === userId);
+      if (!target) {
+        showAlert('warning', 'Користувача не знайдено.');
+        return false;
+      }
+
+      try {
+        const logsQuery = query(
+          collection(db, USER_ACTIVITY_COLLECTION),
+          where('uid', '==', userId),
+          limit(MAX_LOG_ROWS)
+        );
+        const snapshot = await getDocs(logsQuery);
+        const rawLogs = snapshot.docs.map((snapshotDoc) => snapshotDoc.data() || {});
+        rawLogs.sort((left, right) => {
+          const leftTime = Date.parse(left.createdAt || '');
+          const rightTime = Date.parse(right.createdAt || '');
+          if (!Number.isFinite(leftTime) && !Number.isFinite(rightTime)) {
+            return 0;
+          }
+          if (!Number.isFinite(leftTime)) {
+            return 1;
+          }
+          if (!Number.isFinite(rightTime)) {
+            return -1;
+          }
+          return rightTime - leftTime;
+        });
+
+        const lines = rawLogs.map((entry) => `[${formatLogDate(entry.createdAt)}] ${formatLogRow(entry)}`);
+        const header = [
+          `Логи TaskFlow`,
+          `Користувач: ${target.name} (${target.email})`,
+          `UID: ${userId}`,
+          `Згенеровано: ${new Date().toLocaleString('uk-UA')}`,
+          `Кількість записів: ${lines.length}`,
+          ''
+        ];
+
+        const content = [...header, ...lines].join('\n');
+        const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        const safeDate = new Date().toISOString().replace(/[:.]/g, '-');
+        link.href = url;
+        link.download = `taskflow-logs-${userId}-${safeDate}.log`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+
+        showAlert('success', 'Файл логів завантажено.');
+        return true;
+      } catch {
+        showAlert('danger', 'Не вдалося сформувати файл логів.');
+        return false;
+      }
+    },
+    [allUsers, permissions.canManageUsers, permissions.canReviewTasks, permissions.canViewUsers, showAlert]
   );
 
   const persistShopState = useCallback(
@@ -787,6 +912,7 @@ export default function useAdminActions({
     onDeleteTask,
     onFlagUser,
     onResolveFlag,
+    onDownloadUserLogs,
     onAddCategory,
     onRenameCategory,
     onDeleteCategory,

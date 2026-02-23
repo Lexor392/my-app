@@ -15,10 +15,7 @@ import {
   deleteDoc,
   doc,
   getDoc,
-  limit,
   onSnapshot,
-  orderBy,
-  query,
   setDoc
 } from 'firebase/firestore';
 import { ADMIN_ACCOUNT, OWNER_EMAIL, createUserProfile, sanitizeUser } from '../data/constants';
@@ -31,26 +28,129 @@ const USER_ACTIVITY_COLLECTION = 'userActivity';
 const PRESENCE_HEARTBEAT_MS = 12000;
 const PRESENCE_TTL_MS = 45000;
 
-const EVENT_LOGIN = 'login';
-const EVENT_LOGOUT = 'logout';
+const EVENT_STATUS_ONLINE = 'status_online';
+const EVENT_STATUS_OFFLINE = 'status_offline';
+
+const EVENT_POINTS = 'points';
+const EVENT_BOARDS_ADD = 'boards_add';
+const EVENT_BOARDS_DEL = 'boards_del';
+const EVENT_TASKS_ADD = 'tasks_add';
+const EVENT_TASKS_DEL = 'tasks_del';
+const EVENT_PURCHASES_ADD = 'purchases_add';
+const EVENT_LEDGER_TOPUP = 'ledger_topup';
+const EVENT_LEDGER_PURCHASE = 'ledger_purchase';
 
 const toIsoNow = () => new Date().toISOString();
 const toIsoFuture = (ms) => new Date(Date.now() + ms).toISOString();
 
-const parseEventTimestamp = (value) => {
-  if (typeof value === 'string') {
-    const parsed = Date.parse(value);
-    if (Number.isFinite(parsed)) {
-      return parsed;
+const normalizeId = (value) => String(value ?? '').trim();
+
+const idsSetFrom = (items) =>
+  new Set(
+    (Array.isArray(items) ? items : [])
+      .map((item) => normalizeId(item?.id))
+      .filter(Boolean)
+  );
+
+const collectAddedIds = (beforeIds, afterIds) =>
+  [...afterIds].filter((id) => !beforeIds.has(id));
+
+const collectDeletedIds = (beforeIds, afterIds) =>
+  [...beforeIds].filter((id) => !afterIds.has(id));
+
+const summarizeEvents = (beforeUser, afterUser) => {
+  if (!beforeUser || !afterUser) {
+    return [];
+  }
+
+  const events = [];
+
+  const beforePoints = Number(beforeUser.points || 0);
+  const afterPoints = Number(afterUser.points || 0);
+  if (beforePoints !== afterPoints) {
+    events.push({
+      type: EVENT_POINTS,
+      data: {
+        d: afterPoints - beforePoints,
+        n: afterPoints
+      }
+    });
+  }
+
+  const beforeBoards = idsSetFrom(beforeUser.boards);
+  const afterBoards = idsSetFrom(afterUser.boards);
+  const addedBoards = collectAddedIds(beforeBoards, afterBoards);
+  const deletedBoards = collectDeletedIds(beforeBoards, afterBoards);
+  if (addedBoards.length > 0) {
+    events.push({ type: EVENT_BOARDS_ADD, data: { c: addedBoards.length } });
+  }
+  if (deletedBoards.length > 0) {
+    events.push({ type: EVENT_BOARDS_DEL, data: { c: deletedBoards.length } });
+  }
+
+  const beforeTasks = idsSetFrom(beforeUser.tasks);
+  const afterTasks = idsSetFrom(afterUser.tasks);
+  const addedTasks = collectAddedIds(beforeTasks, afterTasks);
+  const deletedTasks = collectDeletedIds(beforeTasks, afterTasks);
+  if (addedTasks.length > 0) {
+    events.push({ type: EVENT_TASKS_ADD, data: { c: addedTasks.length } });
+  }
+  if (deletedTasks.length > 0) {
+    events.push({ type: EVENT_TASKS_DEL, data: { c: deletedTasks.length } });
+  }
+
+  const beforePurchases = idsSetFrom(beforeUser.purchases);
+  const afterPurchases = idsSetFrom(afterUser.purchases);
+  const addedPurchases = collectAddedIds(beforePurchases, afterPurchases);
+  if (addedPurchases.length > 0) {
+    events.push({ type: EVENT_PURCHASES_ADD, data: { c: addedPurchases.length } });
+  }
+
+  const beforeLedgerIds = idsSetFrom(beforeUser.pointLedger);
+  const newLedgerEntries = (Array.isArray(afterUser.pointLedger) ? afterUser.pointLedger : [])
+    .filter((entry) => !beforeLedgerIds.has(normalizeId(entry?.id)));
+
+  if (newLedgerEntries.length > 0) {
+    let topupCount = 0;
+    let topupAmount = 0;
+    let purchaseCount = 0;
+    let purchaseAmount = 0;
+
+    newLedgerEntries.forEach((entry) => {
+      const source = String(entry?.source || '').toLowerCase();
+      const amount = Math.abs(Number(entry?.amount || 0));
+
+      if (source.includes('purchase')) {
+        purchaseCount += 1;
+        purchaseAmount += amount;
+      }
+
+      if (
+        source.includes('topup')
+        || source.includes('deposit')
+        || source.includes('pack')
+      ) {
+        topupCount += 1;
+        topupAmount += amount;
+      }
+    });
+
+    if (topupCount > 0) {
+      events.push({
+        type: EVENT_LEDGER_TOPUP,
+        data: { c: topupCount, a: Math.round(topupAmount) }
+      });
     }
-    return null;
+
+    if (purchaseCount > 0) {
+      events.push({
+        type: EVENT_LEDGER_PURCHASE,
+        data: { c: purchaseCount, a: Math.round(purchaseAmount) }
+      });
+    }
   }
 
-  if (value && typeof value.toDate === 'function') {
-    return value.toDate().getTime();
-  }
-
-  return null;
+  return events;
 };
 
 const isPresenceOnline = (entry, now = Date.now()) => {
@@ -188,12 +288,6 @@ export default function useAuthStore(showAlert) {
   const [currentUser, setCurrentUser] = useState(null);
   const [allUsers, setAllUsers] = useState([]);
   const [liveUsersCount, setLiveUsersCount] = useState(0);
-  const [authEvents, setAuthEvents] = useState([]);
-  const [authEventsStats, setAuthEventsStats] = useState({
-    logins24h: 0,
-    logouts24h: 0,
-    totalEvents: 0
-  });
 
   const presenceMapRef = useRef(new Map());
   const presenceIdentityRef = useRef({
@@ -252,12 +346,6 @@ export default function useAuthStore(showAlert) {
         setCurrentUser(null);
         setAllUsers([]);
         setLiveUsersCount(0);
-        setAuthEvents([]);
-        setAuthEventsStats({
-          logins24h: 0,
-          logouts24h: 0,
-          totalEvents: 0
-        });
         presenceMapRef.current = new Map();
       }
     });
@@ -529,10 +617,10 @@ export default function useAuthStore(showAlert) {
         sessionId
       };
 
-      if (eventType === EVENT_LOGIN) {
+      if (eventType === EVENT_STATUS_ONLINE) {
         payload.lastLoginAt = nowIso;
       }
-      if (eventType === EVENT_LOGOUT) {
+      if (eventType === EVENT_STATUS_OFFLINE) {
         payload.lastLogoutAt = nowIso;
       }
 
@@ -550,10 +638,7 @@ export default function useAuthStore(showAlert) {
         await addDoc(activityRef, {
           uid,
           type: eventType,
-          createdAt: nowIso,
-          sessionId,
-          name: payload.name,
-          email: payload.email
+          createdAt: nowIso
         });
       } catch {
         // ignore activity write errors
@@ -565,14 +650,14 @@ export default function useAuthStore(showAlert) {
         return;
       }
       offlineSent = true;
-      void writePresence({ isOnline: false, eventType: EVENT_LOGOUT });
+      void writePresence({ isOnline: false, eventType: EVENT_STATUS_OFFLINE });
     };
 
     const pingInterval = setInterval(() => {
       void writePresence({ isOnline: true });
     }, PRESENCE_HEARTBEAT_MS);
 
-    void writePresence({ isOnline: true, eventType: EVENT_LOGIN });
+    void writePresence({ isOnline: true, eventType: EVENT_STATUS_ONLINE });
 
     window.addEventListener('beforeunload', publishOffline);
     window.addEventListener('pagehide', publishOffline);
@@ -586,78 +671,6 @@ export default function useAuthStore(showAlert) {
     };
   }, [sessionUser?.uid]);
 
-  useEffect(() => {
-    if (!sessionUser?.uid || !canAccessUsersDirectory || !db) {
-      setAuthEvents([]);
-      setAuthEventsStats({
-        logins24h: 0,
-        logouts24h: 0,
-        totalEvents: 0
-      });
-      return;
-    }
-
-    const feedQuery = query(
-      collection(db, USER_ACTIVITY_COLLECTION),
-      orderBy('createdAt', 'desc'),
-      limit(200)
-    );
-
-    const unsubscribe = onSnapshot(
-      feedQuery,
-      (snapshot) => {
-        const events = snapshot.docs.map((snapshotDoc) => {
-          const payload = snapshotDoc.data() || {};
-          const createdAt = typeof payload.createdAt === 'string'
-            ? payload.createdAt
-            : (payload.createdAt?.toDate?.().toISOString?.() || '');
-
-          return {
-            id: snapshotDoc.id,
-            uid: payload.uid || '',
-            type: payload.type || '',
-            createdAt,
-            name: payload.name || 'User',
-            email: payload.email || ''
-          };
-        });
-
-        const since = Date.now() - (24 * 60 * 60 * 1000);
-        let logins24h = 0;
-        let logouts24h = 0;
-
-        events.forEach((event) => {
-          const parsed = parseEventTimestamp(event.createdAt);
-          if (!Number.isFinite(parsed) || parsed < since) {
-            return;
-          }
-
-          if (event.type === EVENT_LOGIN) {
-            logins24h += 1;
-          } else if (event.type === EVENT_LOGOUT) {
-            logouts24h += 1;
-          }
-        });
-
-        setAuthEvents(events.slice(0, 30));
-        setAuthEventsStats({
-          logins24h,
-          logouts24h,
-          totalEvents: events.length
-        });
-      },
-      () => {
-        setAuthEvents([]);
-        setAuthEventsStats({
-          logins24h: 0,
-          logouts24h: 0,
-          totalEvents: 0
-        });
-      }
-    );
-
-    return unsubscribe;
-  }, [sessionUser?.uid, canAccessUsersDirectory]);
   const persistUser = useCallback(
     async (userId, candidate, options = {}) => {
       if (!db) {
@@ -665,6 +678,19 @@ export default function useAuthStore(showAlert) {
       }
 
       const normalized = sanitizeUser({ ...candidate, id: userId });
+      let previousUser = null;
+
+      try {
+        const snapshot = await getDoc(doc(db, USERS_COLLECTION, userId));
+        if (snapshot.exists()) {
+          previousUser = sanitizeUser({
+            ...snapshot.data(),
+            id: userId
+          });
+        }
+      } catch {
+        // ignore read error and still try to save
+      }
 
       if (options.lockIdentity && currentUser) {
         normalized.email = currentUser.email;
@@ -680,13 +706,34 @@ export default function useAuthStore(showAlert) {
 
       try {
         await setDoc(doc(db, USERS_COLLECTION, userId), normalized, { merge: false });
+
+        if (previousUser) {
+          const events = summarizeEvents(previousUser, normalized);
+          if (events.length > 0) {
+            const actorUid = currentUser?.id || sessionUser?.uid || userId;
+            await Promise.all(
+              events.map((entry) =>
+                addDoc(collection(db, USER_ACTIVITY_COLLECTION), {
+                  uid: userId,
+                  type: entry.type,
+                  createdAt: toIsoNow(),
+                  actorUid,
+                  ...entry.data
+                })
+              )
+            ).catch(() => {
+              // do not fail user save if activity log write failed
+            });
+          }
+        }
+
         return true;
       } catch {
         showAlert('danger', options.errorMessage || 'Не вдалося зберегти зміни користувача.');
         return false;
       }
     },
-    [currentUser, showAlert]
+    [currentUser, sessionUser?.uid, showAlert]
   );
 
   const persistCurrentUser = useCallback(
@@ -914,8 +961,6 @@ export default function useAuthStore(showAlert) {
     currentUser,
     allUsers,
     liveUsersCount,
-    authEvents,
-    authEventsStats,
     setAuthMode,
     onAuthFormChange,
     onLogin,

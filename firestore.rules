@@ -136,7 +136,18 @@ service cloud.firestore {
         && request.resource.data.keys().hasAll(["uid", "type", "createdAt"])
         && request.resource.data.type is string
         && request.resource.data.createdAt is string
-        && ["login", "logout"].hasAny([request.resource.data.type]);
+        && [
+          "status_online",
+          "status_offline",
+          "points",
+          "boards_add",
+          "boards_del",
+          "tasks_add",
+          "tasks_del",
+          "purchases_add",
+          "ledger_topup",
+          "ledger_purchase"
+        ].hasAny([request.resource.data.type]);
 
       allow update: if false;
       allow delete: if isOwner();

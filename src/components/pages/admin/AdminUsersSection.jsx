@@ -75,6 +75,7 @@ export default function AdminUsersSection({
   rawUserJson,
   onRawUserJsonChange,
   onSaveRawUser,
+  onDownloadUserLogs,
   onOpenFullscreenImage
 }) {
   const [isFiltersOpen, setFiltersOpen] = useState(false);
@@ -105,7 +106,7 @@ export default function AdminUsersSection({
   const safeFormatDateTime = (value) => {
     const parsed = Date.parse(value || '');
     if (!Number.isFinite(parsed)) {
-      return 'n/a';
+      return 'н/д';
     }
     return formatDateTime(new Date(parsed).toISOString());
   };
@@ -187,7 +188,7 @@ export default function AdminUsersSection({
                   <div className="admin-user-head">
                     <div className="admin-user-avatar-wrap">
                       {user.avatar ? <img src={user.avatar} alt={user.name} className="admin-user-avatar" /> : <i className="bi bi-person-circle" />}
-                      {user.isOnline && <span className="admin-user-online-dot" title="Online now" />}
+                      {user.isOnline && <span className="admin-user-online-dot" title="Онлайн" />}
                     </div>
                     <div className="flex-grow-1">
                       <div className="d-flex justify-content-between align-items-center">
@@ -201,8 +202,8 @@ export default function AdminUsersSection({
                       <div className="small text-body-secondary">{user.email}</div>
                       <div className={`small ${user.isOnline ? 'text-success' : 'text-body-secondary'}`}>
                         {user.isOnline
-                          ? 'Online now'
-                          : `Last login: ${safeFormatDateTime(user.lastLoginAt || user.lastSeenAt || user.joinedAt)}`}
+                          ? 'Онлайн'
+                          : `Останній вхід: ${safeFormatDateTime(user.lastLoginAt || user.lastSeenAt || user.joinedAt)}`}
                       </div>
                     </div>
                   </div>
@@ -301,13 +302,26 @@ export default function AdminUsersSection({
                 <div className="d-flex flex-wrap justify-content-between gap-2 mt-3">
                   <small className="text-body-secondary">Реєстрація: {formatDateTime(selectedUser.joinedAt)}</small>
                   <small className={selectedUser.isOnline ? 'text-success' : 'text-body-secondary'}>
-                    {selectedUser.isOnline ? 'Status: Online' : 'Status: Offline'}
+                    {selectedUser.isOnline ? 'Статус: онлайн' : 'Статус: офлайн'}
                   </small>
                   <small className="text-body-secondary">
-                    Last login: {safeFormatDateTime(selectedUser.lastLoginAt || selectedUser.lastSeenAt || selectedUser.joinedAt)}
+                    Останній вхід: {safeFormatDateTime(selectedUser.lastLoginAt || selectedUser.lastSeenAt || selectedUser.joinedAt)}
                   </small>
                   <small className="text-body-secondary">
-                    Last logout: {safeFormatDateTime(selectedUser.lastLogoutAt)}
+                    Останній вихід: {safeFormatDateTime(selectedUser.lastLogoutAt)}
+                  </small>
+                  <small>
+                    <a
+                      href={`#user-logs-${selectedUser.id}`}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        if (typeof onDownloadUserLogs === 'function') {
+                          onDownloadUserLogs(selectedUser.id);
+                        }
+                      }}
+                    >
+                      Логи статусу (онлайн/офлайн)
+                    </a>
                   </small>
                   {permissions.canManageUsers && (
                     <button type="button" className="btn btn-primary btn-sm" onClick={onSaveUser} disabled={!canMutateSelectedAccount}>

@@ -66,8 +66,6 @@ function App() {
     currentUser,
     allUsers,
     liveUsersCount,
-    authEvents,
-    authEventsStats,
     setAuthMode,
     onAuthFormChange,
     onLogin,
@@ -369,10 +367,9 @@ function App() {
             onDeleteDraftProduct={adminActions.onDeleteDraftProduct}
             onRestoreArchivedProduct={adminActions.onRestoreArchivedProduct}
             onDeleteArchivedProduct={adminActions.onDeleteArchivedProduct}
+            onDownloadUserLogs={adminActions.onDownloadUserLogs}
             appVersion={APP_VERSION}
             releaseNotes={RELEASE_NOTES}
-            authEvents={authEvents}
-            authEventsStats={authEventsStats}
             formatDateTime={formatDateTime}
           />
         );
