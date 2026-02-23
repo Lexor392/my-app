@@ -1,0 +1,122 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // IMPORTANT:
+    // Replace email below with your real owner email and keep it in sync with REACT_APP_OWNER_EMAIL.
+    function isOwner() {
+      return isAuthenticated()
+        && request.auth.token.email_verified == true
+        && request.auth.token.email == "lesha.goloborodko392@gmail.com";
+    }
+
+    function myUserDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function hasRole(role) {
+      return isAuthenticated()
+        && myUserDoc().data.roles is list
+        && myUserDoc().data.roles.hasAny([role]);
+    }
+
+    function isOperator() {
+      return hasRole("operator");
+    }
+
+    function isTaskModerator() {
+      return hasRole("task_moderator");
+    }
+
+    function isShopModerator() {
+      return hasRole("shop_moderator");
+    }
+
+    function canViewUsersDirectory() {
+      return isOwner() || isOperator() || isTaskModerator();
+    }
+
+    function canManageShop() {
+      return isOwner() || isOperator() || isShopModerator();
+    }
+
+    match /users/{userId} {
+      allow read: if canViewUsersDirectory() || (isAuthenticated() && request.auth.uid == userId);
+
+      allow create: if isOwner()
+        || (
+          isAuthenticated()
+          && request.auth.uid == userId
+          && request.resource.data.id == userId
+          && request.resource.data.email == request.auth.token.email
+          && request.resource.data.roles is list
+          && request.resource.data.roles.size() == 0
+          && request.resource.data.flags is list
+          && request.resource.data.flags.size() == 0
+          && request.resource.data.isAdmin == false
+          && request.resource.data.isBanned == false
+          && request.resource.data.banReason == ""
+          && request.resource.data.banDescription == ""
+          && request.resource.data.banExpiresAt == null
+          && request.resource.data.bannedAt == null
+        );
+
+      allow update: if isOwner()
+        || (
+          isAuthenticated()
+          && request.auth.uid == userId
+          && resource.data.isAdmin == false
+          && request.resource.data.isAdmin == false
+          && request.resource.data.id == resource.data.id
+          && request.resource.data.email == resource.data.email
+          && request.resource.data.roles == resource.data.roles
+          && request.resource.data.flags == resource.data.flags
+          && request.resource.data.isBanned == resource.data.isBanned
+          && request.resource.data.banReason == resource.data.banReason
+          && request.resource.data.banDescription
+            == (resource.data.banDescription == null ? "" : resource.data.banDescription)
+          && request.resource.data.banExpiresAt == resource.data.banExpiresAt
+          && request.resource.data.bannedAt == resource.data.bannedAt
+        );
+
+      allow update: if (
+        isAuthenticated()
+        && isOperator()
+        && resource.data.isAdmin == false
+        && request.resource.data.id == resource.data.id
+        && request.resource.data.isAdmin == false
+        && request.resource.data.roles == resource.data.roles
+      );
+
+      allow update: if (
+        isAuthenticated()
+        && isTaskModerator()
+        && resource.data.isAdmin == false
+        && request.resource.data.id == resource.data.id
+        && request.resource.data.isAdmin == false
+        && request.resource.data.roles == resource.data.roles
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["flags"])
+      );
+
+      allow delete: if isOwner()
+        || (
+          isAuthenticated()
+          && request.auth.uid == userId
+          && resource.data.isAdmin == false
+        );
+    }
+
+    match /app/shop {
+      allow read: if isAuthenticated();
+      allow write: if canManageShop();
+    }
+
+    match /mail/{mailId} {
+      allow create: if isOwner() || isOperator();
+      allow read, update, delete: if isOwner();
+    }
+  }
+}
